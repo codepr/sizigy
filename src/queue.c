@@ -17,13 +17,13 @@ queue *create_queue(void) {
 
 void release_queue(queue *q) {
     if (q != NULL) {
-        pthread_mutex_lock(&(q->lock));
+        /* pthread_mutex_lock(&(q->lock)); */
         while(q->len > 0) {
             dequeue(q);
         }
-        pthread_mutex_unlock(&(q->lock));
-        pthread_mutex_destroy(&(q->lock));
-        pthread_cond_destroy(&(q->cond));
+        /* pthread_mutex_unlock(&(q->lock)); */
+        /* pthread_mutex_destroy(&(q->lock)); */
+        /* pthread_cond_destroy(&(q->cond)); */
         free(q);
     }
 }
@@ -38,7 +38,7 @@ void enqueue(queue *q, void *data) {
     new_item->next = NULL;
     new_item->data = data;
     q->len++;
-    if(q->front == NULL && q->rear == NULL) {
+    if (q->front == NULL && q->rear == NULL) {
         q->front = new_item;
         q->rear = new_item;
     }
@@ -64,7 +64,7 @@ void *dequeue(queue* q) {
     queue_item *del_item;
     del_item = q->front;
     q->front = q->front->next;
-    if(!q->front)
+    if (!q->front)
         q->rear = NULL;
     item = del_item->data;
     if (del_item)

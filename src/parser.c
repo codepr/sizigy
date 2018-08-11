@@ -11,6 +11,14 @@ static void remove_newline(char *str) {
 }
 
 
+char *append_string(const char *str, const char *token) {
+    size_t len = strlen(str) + strlen(token);
+    char *ret = malloc(len * sizeof(char) + 1);
+    *ret = '\0';
+    return strcat(strcat(ret, str), token);
+}
+
+
 struct command parse_command(char *buf) {
     char tmp[MAX_COMMAND_SIZE];
     strcpy(tmp, buf);

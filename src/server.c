@@ -14,7 +14,6 @@
 #include <sys/stat.h>
 #include <arpa/inet.h>
 #include "map.h"
-#include "list.h"
 #include "server.h"
 #include "parser.h"
 #include "channel.h"
@@ -164,7 +163,7 @@ static int accept_connection(int epollfd, int serversock) {
         return -1;
     }
 
-    printf("*** [%p] Client connected from %s:%" PRIu16 "\n", (void *) pthread_self(),
+    printf("*** [%p] [%s:%" PRIu16 "] -> Client connection\n", (void *) pthread_self(),
            ip_buff, ntohs(addr.sin_port));
 
     // add to EPOLLIN client sock
@@ -213,25 +212,39 @@ static int handle_request(int epollfd, int clientfd) {
     printf("*** [%p] [%s:%" PRIu16 "] -> command: %s", (void *) pthread_self(),
            ip_buff, ntohs(addr.sin_port), readbuff);
 
+    // XXX remove me
+    printf("\n%ld - %ld\n", strlen(readbuff), n);
+    struct protocol_packet p = unpack(readbuff, n);
+    printf("%d - %d - %s\n", p.type, p.opcode, p.data);
+
     struct command comm = parse_command(readbuff);
     struct reply reply;
     reply.fd = clientfd;
     reply.data = OK;
+    void *raw_chan = NULL; // placeholder for map_get
 
     switch(comm.type) {
         case CREATE:
-            printf("*** [%p] [System] -> Creating channel %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
+            printf("*** [%p] [%s:%" PRIu16 "] -> Creating channel %s\n", (void *) pthread_self(),
+                    ip_buff, ntohs(addr.sin_port), comm.cmd.b.channel_name);
             struct channel *channel = create_channel(comm.cmd.b.channel_name);
             map_put(channels, comm.cmd.b.channel_name, channel);
             reply.type = OK_REPLY;
             break;
         case DELETE:
-            printf("*** [%p] [System] -> Deleting channel %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
+            printf("*** [%p] [%s:%" PRIu16 "] -> Deleting channel %s\n", (void *) pthread_self(),
+                    ip_buff, ntohs(addr.sin_port), comm.cmd.b.channel_name);
+            raw_chan = map_get(channels, comm.cmd.b.channel_name);
+            if (raw_chan) {
+                struct channel *chan = (struct channel *) raw_chan;
+                destroy_channel(chan);
+            }
             map_del(channels, comm.cmd.b.channel_name);
             reply.type = OK_REPLY;
             break;
         case SUBSCRIBE:
-            printf("*** [%p] [System] -> Subscribing to channel %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
+            printf("*** [%p] [%s:%" PRIu16 "] -> Subscribing to channel %s\n", (void *) pthread_self(),
+                    ip_buff, ntohs(addr.sin_port), comm.cmd.b.channel_name);
             void *raw = map_get(channels, comm.cmd.b.channel_name);
             if (!raw) {
                 struct channel *channel = create_channel(comm.cmd.b.channel_name);
@@ -246,37 +259,48 @@ static int handle_request(int epollfd, int clientfd) {
             reply.type = OK_REPLY;
             break;
         case UNSUBSCRIBE:
-            printf("*** [%p] [System] -> Unsubscribing from channel %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
+            printf("*** [%p] [%s:%" PRIu16 "] -> Unsubscribing from channel %s\n", (void *) pthread_self(),
+                    ip_buff, ntohs(addr.sin_port), comm.cmd.b.channel_name);
+            raw_chan = map_get(channels, comm.cmd.b.channel_name);
+            if (raw_chan) {
+                struct channel *chan = (struct channel *) raw_chan;
+                struct subscriber sub = { clientfd, "sub" };
+                del_subscriber(chan, &sub);
+            }
             reply.type = OK_REPLY;
             break;
         case PUBLISH:
-            printf("*** [%p] [System] -> Publishing %s to channel %s\n",
-                    (void *) pthread_self(), comm.cmd.a.message, comm.cmd.a.channel_name);
+            printf("*** [%p] [%s:%" PRIu16 "] -> Publishing %s to channel %s\n",
+                    (void *) pthread_self(), ip_buff, ntohs(addr.sin_port), comm.cmd.a.message, comm.cmd.a.channel_name);
             reply.data = comm.cmd.a.message;
             reply.channel = comm.cmd.a.channel_name;
             reply.type = BULK_REPLY;
             break;
         case ERR_UNKNOWN:
-            printf("*** [%p] [System] -> Error\n", (void *) pthread_self());
+            printf("*** [%p] [%s:%" PRIu16 "] -> %s", (void *) pthread_self(),
+                    ip_buff, ntohs(addr.sin_port), E_UNKNOWN);
             reply.type = OK_REPLY;
             reply.data = E_UNKNOWN;
             break;
         case ERR_MISS_CHAN:
-            printf("*** [%p] [System] -> Error\n", (void *) pthread_self());
+            printf("*** [%p] [%s:%" PRIu16 "] -> %s", (void *) pthread_self(),
+                    ip_buff, ntohs(addr.sin_port), E_MISS_CHAN);
             reply.type = OK_REPLY;
             reply.data = E_MISS_CHAN;
             break;
         case ERR_MISS_MEX:
-            printf("*** [%p] [System] -> Error\n", (void *) pthread_self());
+            printf("*** [%p] [%s:%" PRIu16 "] -> %s", (void *) pthread_self(),
+                    ip_buff, ntohs(addr.sin_port), E_MISS_MEX);
             reply.type = OK_REPLY;
             reply.data = E_MISS_MEX;
             break;
         case QUIT:
-            printf("*** [%p] [System] -> Quitting\n", (void *) pthread_self());
+            printf("*** [%p] [%s:%" PRIu16 "] -> Quitting\n", (void *) pthread_self(), ip_buff, ntohs(addr.sin_port));
             close(clientfd);
             break;
         default:
-            printf("*** [%p] [System] -> Unknown command\n", (void *) pthread_self());
+            printf("*** [%p] [%s:%" PRIu16 "] -> %s", (void *) pthread_self(),
+                    ip_buff, ntohs(addr.sin_port), E_UNKNOWN);
             break;
     }
 
@@ -321,13 +345,16 @@ static void *worker(void *args) {
                 struct reply *reply = (struct reply *) events[i].data.ptr;
                 ssize_t sent;
                 if (reply->type == OK_REPLY) {
-                    if ((sent = send(reply->fd, reply->data, strlen(reply->data), 0)) < 0) {
+                    /* if ((sent = send(reply->fd, reply->data, strlen(reply->data), 0)) < 0) { */
+                    struct protocol_packet pp = { 0x80, 0x01, "Hello world\n" };
+                    struct packed p = pack(pp);
+                    if ((sent = send(reply->fd, p.data, p.size, 0)) < 0) {
                         perror("send(2): can't write on socket descriptor");
                         return NULL;
                     }
                 } else {
                     // Reply to original sender
-                    if ((sent = send(reply->fd, "OK\n", 3, 0)) < 0) {
+                    if ((sent = send(reply->fd, OK, strlen(OK), 0)) < 0) {
                             perror("send(2): can't write on socket descriptor");
                             return NULL;
                     }
@@ -337,7 +364,8 @@ static void *worker(void *args) {
                         map_put(channels, reply->channel, channel);
                     }
                     struct channel *chan = (struct channel *) map_get(channels, reply->channel);
-                    publish_message(chan, strdup(reply->data));
+                    char *channel_name = append_string(strdup(reply->channel), " ");
+                    publish_message(chan, append_string(channel_name, strdup(reply->data)));
                     free_reply(reply);
                 }
                 // Rearm descriptor on EPOLLIN

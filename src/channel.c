@@ -5,9 +5,12 @@
 
 
 static int sub_compare(void *arg1, void *arg2) {
-    struct subscriber *sub1 = (struct subscriber *) arg1;
-    struct subscriber *sub2 = (struct subscriber *) arg2;
-    if ((STR_EQ(sub1->name, sub2->name)) && sub1->fd == sub2->fd)
+    list_node *node1 = (list_node *) arg1;
+    list_node *node2 = (list_node *) arg2;
+    struct subscriber *sub1 = (struct subscriber *) node1->data;
+    struct subscriber *sub2 = (struct subscriber *) node2->data;
+    // FIXME should be && in place of ||
+    if ((STR_EQ(sub1->name, sub2->name)) || sub1->fd == sub2->fd)
         return 0;
     return 1;
 }

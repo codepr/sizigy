@@ -6,10 +6,11 @@ SRC=src/map.c 			\
 	src/queue.c			\
 	src/parser.c 		\
 	src/server.c		\
-	src/channel.c
+	src/channel.c       \
+	src/protocol.c
 
-toyker: $(SRC)
-	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(SRC) src/main.c -o $(BIN)/toyker
+drakkar: $(SRC)
+	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(SRC) src/main.c -o $(BIN)/drakkar
 
 clean:
-	rm -f $(BIN)/toyker
+	rm -f $(BIN)/drakkar

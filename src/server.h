@@ -1,11 +1,6 @@
 #ifndef NETWORKING_H
 #define NETWORKING_H
 
-
-#include "list.h"
-#include "queue.h"
-
-
 #define EPOLL_WORKERS 4
 #define MAX_EVENTS	  64
 #define BUFSIZE		  2048
@@ -30,17 +25,6 @@ struct reply {
     char *data;
     char *channel;
 };
-
-/* struct channel { */
-/*     char *name; */
-/*     list *subscribers; */
-/*     queue *messages; */
-/* }; */
-/*  */
-/* struct subscriber { */
-/*     int fd; */
-/*     char *name; */
-/* }; */
 
 
 int start_server();

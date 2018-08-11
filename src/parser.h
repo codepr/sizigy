@@ -28,6 +28,7 @@ struct command {
 };
 
 
+char *append_string(const char *, const char *);
 struct command parse_command(char *);
 
 

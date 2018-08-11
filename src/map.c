@@ -122,7 +122,7 @@ int map_put(map *m, void *key, void *val) {
     /* pthread_mutex_lock(&(m->wlock)); */
     /* Find a place to put our value */
     int index = hashmap_hash(m, key);
-    while(index == MAP_FULL){
+    while (index == MAP_FULL){
         if (hashmap_rehash(m) == MAP_ERR) {
             /* pthread_mutex_unlock(&(m->wlock)); */
             return MAP_ERR;
@@ -148,7 +148,7 @@ void *map_get(map *m, void *key) {
     /* Find data location */
     int curr = hashmap_hash_int(m, key);
     /* Linear probing, if necessary */
-    for(int i = 0; i < MAX_CHAIN_LENGTH; i++){
+    for (int i = 0; i < MAX_CHAIN_LENGTH; i++){
         if (m->entries[curr].in_use == 1) {
             if (strcmp(m->entries[curr].key, key) == 0)
                 return (m->entries[curr].val);
@@ -168,7 +168,7 @@ map_entry *map_get_entry(map *m, void *key) {
     int curr = hashmap_hash_int(m, key);
 
     /* Linear probing, if necessary */
-    for(int i = 0; i < MAX_CHAIN_LENGTH; i++) {
+    for (int i = 0; i < MAX_CHAIN_LENGTH; i++) {
         if (m->entries[curr].in_use == 1) {
             if (strcmp(m->entries[curr].key, key) == 0)
                 return &m->entries[curr];
@@ -190,7 +190,7 @@ int map_del(map *m, void *key) {
     /* Find key */
     int curr = hashmap_hash_int(m, key);
     /* Linear probing, if necessary */
-    for(int i = 0; i < MAX_CHAIN_LENGTH; i++) {
+    for (int i = 0; i < MAX_CHAIN_LENGTH; i++) {
         // check wether the position in array is in use
         int in_use = m->entries[curr].in_use;
         if (in_use == 1) {
@@ -219,7 +219,7 @@ int map_iterate2(map *m, func f, void *arg1) {
     /* On empty hashmap, return immediately */
     if (m->size <= 0) return MAP_ERR;
     /* Linear probing */
-    for(int i = 0; i < m->table_size; i++) {
+    for (int i = 0; i < m->table_size; i++) {
         if (m->entries[i].in_use != 0) {
             map_entry data = m->entries[i];
             int status = f(arg1, &data);
@@ -239,7 +239,7 @@ int map_iterate3(map *m, func3 f, void *arg1, void *arg2) {
     /* On empty hashmap, return immediately */
     if (m->size <= 0) return MAP_ERR;
     /* Linear probing */
-    for(int i = 0; i < m->table_size; i++) {
+    for (int i = 0; i < m->table_size; i++) {
         if (m->entries[i].in_use != 0) {
             map_entry data = m->entries[i];
             int status = f(arg1, arg2, &data);

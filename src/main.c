@@ -19,11 +19,11 @@
 
 int main(int argc, char **argv) {
     /* struct protocol_packet packet = create_packet(); */
-    /* printf("%d %s %ld\n", packet.opcode, packet.data, sizeof(struct protocol_packet)); */
-    /* char *packed = pack(packet); */
-    /* printf("%s %ld\n", packed, sizeof(packed)); */
-    /* struct protocol_packet pkt = unpack(packed); */
-    /* printf("%d %s %ld\n", pkt.opcode,pkt.data, sizeof(struct protocol_packet)); */
+    /* printf("%d %d %s %ld\n", packet.type, packet.opcode, packet.data, sizeof(struct protocol_packet)); */
+    /* struct packed pkd = pack(packet); */
+    /* printf("%s %ld\n", pkd.data, sizeof(pkd)); */
+    /* struct protocol_packet pkt = unpack(pkd.data, pkd.size); */
+    /* printf("%d %d %s %ld\n", pkt.type, pkt.opcode,pkt.data, sizeof(struct protocol_packet)); */
     start_server();
     /* list *l = list_create(); */
     /* char *n = "hello"; */
