@@ -2,12 +2,13 @@
 #define PARSER_H
 
 #include <stdint.h>
-#include <string.h>
+#include "protocol.h"
 
 #define STR_EQ(s1, s2) strcasecmp(s1, s2) == 0
 
-
-enum commands { CREATE, PUBLISH, SUBSCRIBE, UNSUBSCRIBE, DELETE, QUIT, ERR_UNKNOWN, ERR_MISS_CHAN, ERR_MISS_MEX };
+#define ERR_UNKNOWN   0x64
+#define ERR_MISS_CHAN 0x65
+#define ERR_MISS_MEX  0x66
 
 
 struct build {
@@ -28,8 +29,8 @@ struct command {
 };
 
 
-char *append_string(const char *, const char *);
 struct command parse_command(char *);
+struct command parse_protocol_command(struct protocol_packet);
 
 
 #endif

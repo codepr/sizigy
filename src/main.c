@@ -1,10 +1,16 @@
 #include <stdio.h>
 #include <string.h>
+#include <signal.h>
 #include "server.h"
 #include "protocol.h"
 #include "parser.h"
 #include "list.h"
 
+/* Catch Signal Handler functio */
+void signal_callback_handler(int signum){
+
+        printf("Caught signal SIGPIPE %d\n",signum);
+}
 
 /* static int compare(void *arg1, void *arg2) { */
 /*     list_node *node1 = (list_node *) arg1; */
@@ -24,6 +30,8 @@ int main(int argc, char **argv) {
     /* printf("%s %ld\n", pkd.data, sizeof(pkd)); */
     /* struct protocol_packet pkt = unpack(pkd.data, pkd.size); */
     /* printf("%d %d %s %ld\n", pkt.type, pkt.opcode,pkt.data, sizeof(struct protocol_packet)); */
+    /* Catch Signal Handler SIGPIPE */
+    /* signal(SIGPIPE, signal_callback_handler); */
     start_server();
     /* list *l = list_create(); */
     /* char *n = "hello"; */

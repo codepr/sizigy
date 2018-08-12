@@ -11,7 +11,7 @@
 #define E_MISS_MEX "ERR: Missing message to publish\n"
 
 
-enum REPLY_TYPE { OK_REPLY, BULK_REPLY };
+enum REPLY_TYPE { ACK_REPLY, NACK_REPLY, DATA_REPLY };
 
 
 struct socks {

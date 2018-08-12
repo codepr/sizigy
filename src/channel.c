@@ -39,11 +39,13 @@ void del_subscriber(struct channel *chan, struct subscriber *subscriber) {
 int publish_message(struct channel *chan, void *message) {
     /* Add message to the queue associated to the channel */
     enqueue(chan->messages, message);
+    struct protocol_packet pp = create_single_packet(DATA, message);
+    struct packed p = pack(pp);
     /* Iterate through all the subscribers to send them the message */
     list_node *cursor = chan->subscribers->head;
     while (cursor) {
         struct subscriber *sub = (struct subscriber *) cursor->data;
-        if (send(sub->fd, message, strlen(message), 0) < 0) {
+        if (send(sub->fd, p.data, p.size, MSG_NOSIGNAL) < 0) {
             return -1;
         }
         cursor = cursor->next;
