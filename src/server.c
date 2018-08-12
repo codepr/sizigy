@@ -175,12 +175,13 @@ static int accept_connection(int epollfd, int serversock) {
 
 static int send_data(void *arg1, int fd) {
     queue_item *item = (queue_item *) arg1;
-    struct protocol_packet pp = create_single_packet(DATA, item->data);
+    struct protocol_packet pp = create_single_packet(DATA, AT_MOST_ONCE, 0, item->data);
     struct packed p = pack(pp);
     if (send(fd, p.data, p.size, MSG_NOSIGNAL) < 0) {
         printf("Error sending\n");
         return -1;
     }
+    free(p.data);
     return 0;
 }
 
@@ -223,9 +224,10 @@ static int handle_request(int epollfd, int clientfd) {
     }
 
     /* Unpack incoming bytes */
-    struct protocol_packet p = unpack(readbuff, n);
+    struct protocol_packet p = unpack(readbuff);
     /* Parse command according to the communication protocol */
     struct command comm = parse_protocol_command(p);
+    free(p.data);
     struct reply reply;
     reply.fd = clientfd;
     reply.data = OK;       // placeholder reply
@@ -348,28 +350,30 @@ static void *worker(void *args) {
                 struct reply *reply = (struct reply *) events[i].data.ptr;
                 ssize_t sent;
                 if (reply->type == ACK_REPLY) {
-                    struct protocol_packet pp = create_single_packet(ACK, reply->data);
+                    struct protocol_packet pp = create_single_packet(ACK, AT_MOST_ONCE, 0, reply->data);
                     struct packed p = pack(pp);
                     if ((sent = send(reply->fd, p.data, p.size, MSG_NOSIGNAL)) < 0) {
                         perror("send(2): can't write on socket descriptor");
                         return NULL;
                     }
+                    free(p.data);
                 } else if (reply->type == NACK_REPLY) {
-                    struct protocol_packet pp = create_single_packet(NACK, reply->data);
+                    struct protocol_packet pp = create_single_packet(NACK, AT_MOST_ONCE, 0, reply->data);
                     struct packed p = pack(pp);
                     if ((sent = send(reply->fd, p.data, p.size, MSG_NOSIGNAL)) < 0) {
                         perror("send(2): can't write on socket descriptor");
                         return NULL;
                     }
-
+                    free(p.data);
                 } else {
                     // Reply to original sender
-                    struct protocol_packet pp = create_single_packet(ACK, OK);
+                    struct protocol_packet pp = create_single_packet(ACK, AT_MOST_ONCE, 0, OK);
                     struct packed p = pack(pp);
                     if ((sent = send(reply->fd, p.data, p.size, MSG_NOSIGNAL)) < 0) {
                             perror("send(2): can't write on socket descriptor");
                             return NULL;
                     }
+                    free(p.data);
                     void *raw_subs = map_get(channels, reply->channel);
                     if (!raw_subs) {
                         struct channel *channel = create_channel(reply->channel);
@@ -379,6 +383,7 @@ static void *worker(void *args) {
                     char *channel_name = append_string(strdup(reply->channel), " ");
                     publish_message(chan, append_string(channel_name, strdup(reply->data)));
                     free_reply(reply);
+                    free(channel_name);
                 }
                 // Rearm descriptor on EPOLLIN
                 set_epollin(fds->epollfd, reply->fd);
