@@ -1,12 +1,10 @@
 #ifndef MAP_H
 #define MAP_H
 
-#include <pthread.h>
 
-
-#define MAP_OK              0
-#define MAP_ERR             -1
-#define MAP_FULL            -2
+#define MAP_OK   0
+#define MAP_ERR  -1
+#define MAP_FULL -2
 #define CRC32(c, x) crc32(c, x)
 
 

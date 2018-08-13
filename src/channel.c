@@ -1,5 +1,7 @@
 #include <string.h>
 #include <sys/socket.h>
+#include "map.h"
+#include "server.h"
 #include "parser.h"
 #include "channel.h"
 
@@ -36,10 +38,11 @@ void del_subscriber(struct channel *chan, struct subscriber *subscriber) {
 }
 
 
-int publish_message(struct channel *chan, void *message) {
+int publish_message(struct channel *chan, uint16_t qos, void *message) {
     /* Add message to the queue associated to the channel */
     enqueue(chan->messages, message);
-    struct protocol_packet pp = create_single_packet(DATA, AT_MOST_ONCE, 0, message);
+    struct protocol_packet pp = create_single_packet(DATA, qos, 0, message);
+    uint32_t id = pp.id;
     struct packed p = pack(pp);
     /* Iterate through all the subscribers to send them the message */
     list_node *cursor = chan->subscribers->head;
@@ -47,6 +50,10 @@ int publish_message(struct channel *chan, void *message) {
         struct subscriber *sub = (struct subscriber *) cursor->data;
         if (send(sub->fd, p.data, p.size, MSG_NOSIGNAL) < 0) {
             return -1;
+        }
+        if (qos == AT_LEAST_ONCE) {
+            /* Add message to the waiting ACK map */
+            map_put(global.ack_waiting, &id, &pp);
         }
         cursor = cursor->next;
     }

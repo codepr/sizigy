@@ -13,7 +13,6 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>
-#include "map.h"
 #include "util.h"
 #include "server.h"
 #include "parser.h"
@@ -21,7 +20,7 @@
 #include "protocol.h"
 
 
-map *channels;
+struct global global;
 
 
 static void add_epollin(int efd, int fd) {
@@ -231,46 +230,49 @@ static int handle_request(int epollfd, int clientfd) {
     struct reply reply;
     reply.fd = clientfd;
     reply.data = OK;       // placeholder reply
+    reply.qos = comm.qos;
     void *raw_chan = NULL; // placeholder for map_get
 
     switch(comm.type) {
         case CREATE_CHANNEL:
             printf("*** [%p] CREATE %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
             struct channel *channel = create_channel(comm.cmd.b.channel_name);
-            map_put(channels, comm.cmd.b.channel_name, channel);
+            map_put(global.channels, comm.cmd.b.channel_name, channel);
             reply.type = ACK_REPLY;
             break;
         case DELETE_CHANNEL:
             printf("*** [%p] DELETE %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
-            raw_chan = map_get(channels, comm.cmd.b.channel_name);
+            raw_chan = map_get(global.channels, comm.cmd.b.channel_name);
             if (raw_chan) {
                 struct channel *chan = (struct channel *) raw_chan;
                 destroy_channel(chan);
             }
-            map_del(channels, comm.cmd.b.channel_name);
+            map_del(global.channels, comm.cmd.b.channel_name);
             reply.type = ACK_REPLY;
             break;
         case SUBSCRIBE_CHANNEL:
             printf("*** [%p] SUBSCRIBE %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
-            void *raw = map_get(channels, comm.cmd.b.channel_name);
+            void *raw = map_get(global.channels, comm.cmd.b.channel_name);
             if (!raw) {
                 struct channel *channel = create_channel(comm.cmd.b.channel_name);
-                map_put(channels, comm.cmd.b.channel_name, channel);
+                map_put(global.channels, comm.cmd.b.channel_name, channel);
             }
-            struct channel *chan = (struct channel *) map_get(channels, comm.cmd.b.channel_name);
+            struct channel *chan = (struct channel *) map_get(global.channels, comm.cmd.b.channel_name);
             struct subscriber *sub = malloc(sizeof(struct subscriber));
             sub->fd = clientfd;
             sub->name = "sub";
+            sub->qos = comm.qos;
             add_subscriber(chan, sub);
             send_queue(chan->messages, clientfd, send_data);
             reply.type = ACK_REPLY;
             break;
         case UNSUBSCRIBE_CHANNEL:
             printf("*** [%p] UNSUBSCRIBE %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
-            raw_chan = map_get(channels, comm.cmd.b.channel_name);
+            raw_chan = map_get(global.channels, comm.cmd.b.channel_name);
             if (raw_chan) {
                 struct channel *chan = (struct channel *) raw_chan;
-                struct subscriber sub = { clientfd, "sub" };
+                // XXX basic placeholder subscriber
+                struct subscriber sub = { clientfd, AT_MOST_ONCE, "sub" };
                 del_subscriber(chan, &sub);
             }
             reply.type = ACK_REPLY;
@@ -279,8 +281,21 @@ static int handle_request(int epollfd, int clientfd) {
             reply.data = comm.cmd.a.message;
             reply.channel = comm.cmd.a.channel_name;
             reply.type = DATA_REPLY;
-            printf("*** [%p] PUBLISH %s to channel %s (%ld bytes)\n", (void *) pthread_self(), comm.cmd.a.message,
+            printf("*** [%p] PUBLISH (id=%d qos=%d redelivered=%d message=%s) on channel %s (%ld bytes)\n",
+                    (void *) pthread_self(), global.next_id, reply.qos, p.redelivered, comm.cmd.a.message,
                     comm.cmd.a.channel_name, strlen(reply.data) + strlen(reply.channel));
+            break;
+        case ACK:
+            reply.type = ACK_REPLY;
+            int id = 0;
+            /* Extract uint32_t ID from the payload */
+            while (*comm.cmd.b.channel_name != '\0') {
+                id = (id * 10) + (*comm.cmd.b.channel_name - '0');
+                comm.cmd.b.channel_name++;
+            }
+            printf("*** [%p] ACK from %s for packet id %d\n", (void *) pthread_self(), ip_buff, id);
+            /* Remove packet from ACK waiting map */
+            map_del(global.ack_waiting, &id);
             break;
         case ERR_UNKNOWN:
             printf("*** [%p] %s", (void *) pthread_self(), E_UNKNOWN);
@@ -343,7 +358,7 @@ static void *worker(void *args) {
                     fprintf(stderr, "Error handling request: %s\n",
                         strerror(errno));
                     /* Clean up all channels if the client was subscribed */
-                    map_iterate2(channels, close_socket, NULL);
+                    map_iterate2(global.channels, close_socket, NULL);
                     close(events[i].data.fd);
                 }
             } else if (events[i].events & EPOLLOUT) {
@@ -374,14 +389,14 @@ static void *worker(void *args) {
                             return NULL;
                     }
                     free(p.data);
-                    void *raw_subs = map_get(channels, reply->channel);
+                    void *raw_subs = map_get(global.channels, reply->channel);
                     if (!raw_subs) {
                         struct channel *channel = create_channel(reply->channel);
-                        map_put(channels, reply->channel, channel);
+                        map_put(global.channels, reply->channel, channel);
                     }
-                    struct channel *chan = (struct channel *) map_get(channels, reply->channel);
+                    struct channel *chan = (struct channel *) map_get(global.channels, reply->channel);
                     char *channel_name = append_string(strdup(reply->channel), " ");
-                    publish_message(chan, append_string(channel_name, strdup(reply->data)));
+                    publish_message(chan, reply->qos, append_string(channel_name, strdup(reply->data)));
                     free_reply(reply);
                     free(channel_name);
                 }
@@ -411,7 +426,9 @@ static void *worker(void *args) {
  * between nodes if the system is started in cluster mode.
  */
 int start_server(void) {
-    channels = map_create();
+    global.channels = map_create();
+    global.ack_waiting = map_create();
+    global.next_id = 1;
     int epollfd;
     /* initialize global epollfd */
     if ((epollfd = epoll_create1(0)) == -1) {

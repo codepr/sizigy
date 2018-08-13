@@ -1,6 +1,9 @@
 #ifndef NETWORKING_H
 #define NETWORKING_H
 
+#include <stdint.h>
+#include "map.h"
+
 #define EPOLL_WORKERS 4
 #define MAX_EVENTS	  64
 #define BUFSIZE		  2048
@@ -20,11 +23,21 @@ struct socks {
 };
 
 struct reply {
-    int type;
+    uint16_t type;
+    uint8_t qos;
     int fd;
     char *data;
     char *channel;
 };
+
+struct global {
+    uint32_t next_id;
+    map *channels;
+    map *ack_waiting;
+};
+
+
+extern struct global global;
 
 
 int start_server();

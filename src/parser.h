@@ -22,6 +22,8 @@ struct action {
 
 struct command {
     uint16_t type;
+    uint8_t qos;
+    uint8_t redelivered;
     union {
         struct build b;
         struct action a;

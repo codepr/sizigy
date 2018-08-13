@@ -75,8 +75,11 @@ struct command parse_protocol_command(struct protocol_packet packet) {
     struct command comm;
     char *channel_name = NULL;
     comm.type = packet.opcode;
+    comm.qos = packet.deliver_level;
+    comm.redelivered = packet.redelivered;
 
     switch (packet.opcode) {
+        case ACK:
         case CREATE_CHANNEL:
         case DELETE_CHANNEL:
         case SUBSCRIBE_CHANNEL:
