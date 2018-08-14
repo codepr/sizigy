@@ -22,16 +22,18 @@ struct socks {
     int serversock;
 };
 
+
 struct reply {
-    uint16_t type;
+    uint8_t type;
     uint8_t qos;
     int fd;
     char *data;
     char *channel;
 };
 
+
 struct global {
-    uint32_t next_id;
+    uint64_t next_id;
     map *channels;
     map *ack_waiting;
 };

@@ -174,7 +174,8 @@ static int accept_connection(int epollfd, int serversock) {
 
 static int send_data(void *arg1, int fd) {
     queue_item *item = (queue_item *) arg1;
-    struct protocol_packet pp = create_single_packet(DATA, AT_MOST_ONCE, 0, item->data);
+    struct message *m = (struct message *) item->data;
+    struct protocol_packet pp = create_sys_pubpacket(PUBLISH_MESSAGE, m->qos, 0, m->channel, m->payload, 0);
     struct packed p = pack(pp);
     if (send(fd, p.data, p.size, MSG_NOSIGNAL) < 0) {
         printf("Error sending\n");
@@ -224,16 +225,17 @@ static int handle_request(int epollfd, int clientfd) {
 
     /* Unpack incoming bytes */
     struct protocol_packet p = unpack(readbuff);
+
     /* Parse command according to the communication protocol */
     struct command comm = parse_protocol_command(p);
-    free(p.data);
+    /* free(p.data); */  //FIXME release memory
     struct reply reply;
     reply.fd = clientfd;
     reply.data = OK;       // placeholder reply
-    reply.qos = comm.qos;
+    /* reply.qos = comm.qos; */
     void *raw_chan = NULL; // placeholder for map_get
 
-    switch(comm.type) {
+    switch(comm.opcode) {
         case CREATE_CHANNEL:
             printf("*** [%p] CREATE %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
             struct channel *channel = create_channel(comm.cmd.b.channel_name);
@@ -261,7 +263,8 @@ static int handle_request(int epollfd, int clientfd) {
             struct subscriber *sub = malloc(sizeof(struct subscriber));
             sub->fd = clientfd;
             sub->name = "sub";
-            sub->qos = comm.qos;
+            sub->qos = 0;
+            /* sub->qos = comm.cmd.qos; */
             add_subscriber(chan, sub);
             send_queue(chan->messages, clientfd, send_data);
             reply.type = ACK_REPLY;
@@ -281,19 +284,19 @@ static int handle_request(int epollfd, int clientfd) {
             reply.data = comm.cmd.a.message;
             reply.channel = comm.cmd.a.channel_name;
             reply.type = DATA_REPLY;
-            printf("*** [%p] PUBLISH (id=%d qos=%d redelivered=%d message=%s) on channel %s (%ld bytes)\n",
-                    (void *) pthread_self(), global.next_id, reply.qos, p.redelivered, comm.cmd.a.message,
+            printf("*** [%p] PUBLISH (id=%ld qos=%d redelivered=%d message=%s) on channel %s (%ld bytes)\n",
+                    (void *) pthread_self(), global.next_id, reply.qos, p.payload.sys_pubpacket.redelivered, comm.cmd.a.message,
                     comm.cmd.a.channel_name, strlen(reply.data) + strlen(reply.channel));
             break;
         case ACK:
             reply.type = ACK_REPLY;
-            int id = 0;
+            uint64_t id = 0;
             /* Extract uint32_t ID from the payload */
             while (*comm.cmd.b.channel_name != '\0') {
                 id = (id * 10) + (*comm.cmd.b.channel_name - '0');
                 comm.cmd.b.channel_name++;
             }
-            printf("*** [%p] ACK from %s for packet id %d\n", (void *) pthread_self(), ip_buff, id);
+            printf("*** [%p] ACK from %s for packet id %ld\n", (void *) pthread_self(), ip_buff, id);
             /* Remove packet from ACK waiting map */
             map_del(global.ack_waiting, &id);
             break;
@@ -314,6 +317,7 @@ static int handle_request(int epollfd, int clientfd) {
             break;
         case QUIT:
             printf("*** [%p] QUIT\n", (void *) pthread_self());
+            shutdown(clientfd, 0);
             close(clientfd);
             break;
         default:
@@ -365,7 +369,7 @@ static void *worker(void *args) {
                 struct reply *reply = (struct reply *) events[i].data.ptr;
                 ssize_t sent;
                 if (reply->type == ACK_REPLY) {
-                    struct protocol_packet pp = create_single_packet(ACK, AT_MOST_ONCE, 0, reply->data);
+                    struct protocol_packet pp = create_data_packet(ACK, reply->data);
                     struct packed p = pack(pp);
                     if ((sent = send(reply->fd, p.data, p.size, MSG_NOSIGNAL)) < 0) {
                         perror("send(2): can't write on socket descriptor");
@@ -373,7 +377,7 @@ static void *worker(void *args) {
                     }
                     free(p.data);
                 } else if (reply->type == NACK_REPLY) {
-                    struct protocol_packet pp = create_single_packet(NACK, AT_MOST_ONCE, 0, reply->data);
+                    struct protocol_packet pp = create_data_packet(NACK, reply->data);
                     struct packed p = pack(pp);
                     if ((sent = send(reply->fd, p.data, p.size, MSG_NOSIGNAL)) < 0) {
                         perror("send(2): can't write on socket descriptor");
@@ -381,9 +385,9 @@ static void *worker(void *args) {
                     }
                     free(p.data);
                 } else {
-                    // Reply to original sender
-                    struct protocol_packet pp = create_single_packet(ACK, AT_MOST_ONCE, 0, OK);
+                    struct protocol_packet pp = create_data_packet(ACK, OK);
                     struct packed p = pack(pp);
+                    // Reply to original sender
                     if ((sent = send(reply->fd, p.data, p.size, MSG_NOSIGNAL)) < 0) {
                             perror("send(2): can't write on socket descriptor");
                             return NULL;
@@ -395,10 +399,8 @@ static void *worker(void *args) {
                         map_put(global.channels, reply->channel, channel);
                     }
                     struct channel *chan = (struct channel *) map_get(global.channels, reply->channel);
-                    char *channel_name = append_string(strdup(reply->channel), " ");
-                    publish_message(chan, reply->qos, append_string(channel_name, strdup(reply->data)));
+                    publish_message(chan, reply->qos, strdup(reply->data));
                     free_reply(reply);
-                    free(channel_name);
                 }
                 // Rearm descriptor on EPOLLIN
                 set_epollin(fds->epollfd, reply->fd);
@@ -419,42 +421,45 @@ static void *worker(void *args) {
 
 
 /*
- * Main event loop thread, awaits for incoming connections using the global
- * epoll instance, his main responsibility is to pass incoming client
- * connections descriptor to a worker thread according to a simple round robin
- * scheduling, other than this, it is the sole responsible of the communication
- * between nodes if the system is started in cluster mode.
+ * Main entry point for start listening on a socket and running an epoll event
+ * loop his main responsibility is to pass incoming client connections
+ * descriptor to workers thread.
  */
 int start_server(void) {
+
+    /* Initialize global server object */
     global.channels = map_create();
     global.ack_waiting = map_create();
-    global.next_id = 1;
+    global.next_id = 1;  // counter to get message id, should be enclosed inside locks
     int epollfd;
-    /* initialize global epollfd */
+
+    /* Initialize epollfd */
     if ((epollfd = epoll_create1(0)) == -1) {
         perror("epoll_create1");
         exit(EXIT_FAILURE);
     }
 
-    // initialize the socket
+    /* Initialize the socket */
     int fd = make_listen("127.0.0.1", "9090");
 
+    /* Set socket in EPOLLIN flag mode, ready to read data */
     add_epollin(epollfd, fd);
 
-    /* worker thread pool */
+    /* Worker thread pool */
     pthread_t workers[EPOLL_WORKERS];
 
-    /* I/0 thread pool initialization, allocating a worker_epool structure for
-       each one. A worker_epool structure is formed of an epoll descriptor and
-       his event queue. Every worker_epoll is added to a list, in order to
-       reuse them in the event loop to add connecting descriptors in a round
-       robin scheduling */
-
+    /* I/0 thread pool initialization, passing a the pair {epollfd, fd} sockets
+       for each one. Every worker handle input from clients, accepting
+       connections and sending out data when a socket is ready to write */
     struct socks fds = { epollfd, fd };
 
     for (int i = 0; i < EPOLL_WORKERS; ++i)
         pthread_create(&workers[i], NULL, worker, (void *) &fds);
 
+    printf("*** [%p] Sizigy v0.1.0\n", (void *) pthread_self());
+    printf("*** [%p] Starting server on 127.0.0.1:9090\n", (void *) pthread_self());
+
+    /* Use main thread as a worker too */
     worker(&fds);
     return 0;
 }

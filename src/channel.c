@@ -1,6 +1,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include "map.h"
+#include "util.h"
 #include "server.h"
 #include "parser.h"
 #include "channel.h"
@@ -12,7 +13,7 @@ static int sub_compare(void *arg1, void *arg2) {
     struct subscriber *sub1 = (struct subscriber *) node1->data;
     struct subscriber *sub2 = (struct subscriber *) node2->data;
     // FIXME should be && in place of ||
-    if ((STR_EQ(sub1->name, sub2->name)) || sub1->fd == sub2->fd)
+    if (sub1->fd == sub2->fd)
         return 0;
     return 1;
 }
@@ -38,12 +39,20 @@ void del_subscriber(struct channel *chan, struct subscriber *subscriber) {
 }
 
 
-int publish_message(struct channel *chan, uint16_t qos, void *message) {
-    /* Add message to the queue associated to the channel */
-    enqueue(chan->messages, message);
-    struct protocol_packet pp = create_single_packet(DATA, qos, 0, message);
-    uint32_t id = pp.id;
+int publish_message(struct channel *chan, uint8_t qos, void *message) {
+    char *channel = append_string(chan->name, " ");
+    struct protocol_packet pp = create_sys_pubpacket(PUBLISH_MESSAGE, qos, 0, channel, message, 1);
+    uint64_t id = pp.payload.sys_pubpacket.id;
     struct packed p = pack(pp);
+
+    struct message *mex = malloc(sizeof(struct message));
+    mex->qos = qos;
+    mex->id = id;
+    mex->channel = channel;
+    mex->payload = message;
+    /* Add message to the queue associated to the channel */
+    enqueue(chan->messages, mex);
+
     /* Iterate through all the subscribers to send them the message */
     list_node *cursor = chan->subscribers->head;
     while (cursor) {

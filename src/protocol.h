@@ -25,13 +25,37 @@
 #define AT_LEAST_ONCE 0x01
 
 
+struct sub_packet {
+    uint8_t qos;
+    uint64_t offset;
+    char *channel_name;
+};
+
+
+struct sys_pubpacket {
+    uint8_t qos;
+    uint8_t redelivered;
+    uint64_t id;
+    char *data;
+};
+
+
+struct cli_pubpacket {
+    uint8_t qos;
+    uint8_t redelivered;
+    char *data;
+};
+
+
 struct protocol_packet {
     uint8_t type;
-    uint16_t opcode;
-    uint8_t deliver_level;
-    uint8_t redelivered;
-    uint32_t id;
-    char *data;
+    uint8_t opcode;
+    union {
+        struct sub_packet sub_packet;
+        struct sys_pubpacket sys_pubpacket;
+        struct cli_pubpacket cli_pubpacket;
+        char *data;
+    } payload;
 };
 
 
@@ -43,8 +67,8 @@ struct packed {
 
 struct packed pack(struct protocol_packet);
 struct protocol_packet unpack(char *);
-struct protocol_packet create_single_packet(uint8_t, uint8_t, uint8_t, char *);
-struct protocol_packet create_double_packet(uint8_t, uint8_t, uint8_t, char *, char *);
+struct protocol_packet create_data_packet(uint8_t, char *);
+struct protocol_packet create_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
 
 
 #endif

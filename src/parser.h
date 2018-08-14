@@ -12,18 +12,21 @@
 
 
 struct build {
+    uint64_t offset;
     char *channel_name;
 };
 
+
 struct action {
+    uint8_t redelivered;
     char *channel_name;
     char *message;
 };
 
+
 struct command {
-    uint16_t type;
+    uint8_t opcode;
     uint8_t qos;
-    uint8_t redelivered;
     union {
         struct build b;
         struct action a;
