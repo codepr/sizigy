@@ -39,6 +39,7 @@ static struct sub_packet unpack_sub_packet(char *bytes) {
     packet.offset = *((uint64_t *) offset);
     packet.channel_name = malloc((data_len + 1) * sizeof(char));
     memcpy(packet.channel_name, data, data_len);
+    packet.channel_name[data_len] = '\0';
     return packet;
 }
 
@@ -79,6 +80,7 @@ static struct sys_pubpacket unpack_sys_pubpacket(char *bytes) {
     packet.id = *((uint64_t *) id);
     packet.data = malloc((data_len + 1) * sizeof(char));
     memcpy(packet.data, data, data_len);
+    packet.data[data_len] = '\0';
     return packet;
 }
 
@@ -97,6 +99,7 @@ static struct cli_pubpacket unpack_cli_pubpacket(char *bytes) {
     packet.redelivered = *((uint8_t *) redelivered);
     packet.data = malloc((data_len + 1) * sizeof(char));
     memcpy(packet.data, data, data_len);
+    packet.data[data_len] = '\0';
     return packet;
 }
 
@@ -117,6 +120,7 @@ struct packed pack(struct protocol_packet packet) {
         case NACK:
         case DATA:
         case QUIT:
+        case PING:
         case CREATE_CHANNEL:
         case DELETE_CHANNEL:
         case UNSUBSCRIBE_CHANNEL:
@@ -199,6 +203,7 @@ struct protocol_packet unpack(char *bytes) {
         case CREATE_CHANNEL:
         case DELETE_CHANNEL:
         case UNSUBSCRIBE_CHANNEL:
+        case PING:
         case QUIT:
         case ACK:
         case NACK:
@@ -210,6 +215,7 @@ struct protocol_packet unpack(char *bytes) {
             packet.type = *((uint8_t *) type);
             packet.payload.data = malloc((data_len + 1) * sizeof(char));
             memcpy(packet.payload.data, data, data_len);
+            packet.payload.data[data_len] = '\0';
             break;
         case SUBSCRIBE_CHANNEL:
             type = bytes + sizeof(uint8_t);
@@ -242,8 +248,9 @@ struct protocol_packet create_data_packet(uint8_t opcode, char *data) {
 
 struct protocol_packet create_sys_pubpacket(uint8_t opcode, uint8_t qos, uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
     uint64_t id = 0;
-    if ((opcode == DATA || opcode == PUBLISH_MESSAGE) && incr == 1)
-        id = global.next_id++;
+    if ((opcode == DATA || opcode == PUBLISH_MESSAGE) && incr == 1) {
+        id = incr_read(&global.next_id);
+    }
     char *data = append_string(channel_name, message);
     struct sys_pubpacket sys_pubpacket = { qos, redelivered, id, data };
     struct protocol_packet packet;

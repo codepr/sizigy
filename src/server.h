@@ -1,20 +1,24 @@
 #ifndef NETWORKING_H
 #define NETWORKING_H
 
+#include <stdio.h>
 #include <stdint.h>
+#include <pthread.h>
+#include <semaphore.h>
 #include "map.h"
+#include "util.h"
 
 #define EPOLL_WORKERS 4
 #define MAX_EVENTS	  64
 #define BUFSIZE		  2048
 
-#define OK "OK\n"
-#define E_UNKNOWN "ERR: Unknown command\n"
+#define OK          "OK\n"
+#define E_UNKNOWN   "ERR: Unknown command\n"
 #define E_MISS_CHAN "ERR: Missing channel name\n"
-#define E_MISS_MEX "ERR: Missing message to publish\n"
+#define E_MISS_MEX  "ERR: Missing message to publish\n"
 
 
-enum REPLY_TYPE { ACK_REPLY, NACK_REPLY, DATA_REPLY };
+enum REPLY_TYPE { ACK_REPLY, NACK_REPLY, DATA_REPLY, PING_REPLY };
 
 
 struct socks {
@@ -33,9 +37,12 @@ struct reply {
 
 
 struct global {
-    uint64_t next_id;
+    counter_t next_id;
     map *channels;
     map *ack_waiting;
+    pthread_mutex_t wlock;
+    pthread_mutex_t rlock;
+    sem_t semaphore;
 };
 
 
@@ -43,5 +50,7 @@ extern struct global global;
 
 
 int start_server();
+int sendall(int , char *, ssize_t *);
+int recvall(int, char *);
 
 #endif

@@ -2,6 +2,7 @@
 #define CHANNEL_H
 
 #include <stdint.h>
+#include <pthread.h>
 #include "list.h"
 #include "queue.h"
 
@@ -10,6 +11,7 @@ struct channel {
     char *name;
     list *subscribers;
     queue *messages;
+    pthread_mutex_t lock;
 };
 
 

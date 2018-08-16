@@ -19,6 +19,7 @@
 #define ACK                 0x07
 #define NACK                0x08
 #define DATA                0x09
+#define PING                0x0a
 
 /* Deliverance guarantee */
 #define AT_MOST_ONCE  0x00

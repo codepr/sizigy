@@ -1,4 +1,5 @@
 #include <string.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include "map.h"
 #include "util.h"
@@ -24,6 +25,7 @@ struct channel *create_channel(char *name) {
    channel->name = name;
    channel->subscribers = list_create();
    channel->messages = create_queue();
+   pthread_mutex_init(&(channel->lock), NULL);
    return channel;
 }
 
@@ -40,10 +42,15 @@ void del_subscriber(struct channel *chan, struct subscriber *subscriber) {
 
 
 int publish_message(struct channel *chan, uint8_t qos, void *message) {
+    /* pthread_mutex_lock(&chan->lock); */
     char *channel = append_string(chan->name, " ");
-    struct protocol_packet pp = create_sys_pubpacket(PUBLISH_MESSAGE, qos, 0, channel, message, 1);
+    uint8_t duplicate = 0;
+    struct protocol_packet pp = create_sys_pubpacket(PUBLISH_MESSAGE, qos, duplicate, channel, message, 1);
     uint64_t id = pp.payload.sys_pubpacket.id;
     struct packed p = pack(pp);
+
+    printf("*** [%p] PUBLISH (id=%ld qos=%d redelivered=%d message=%s) on channel %s (%ld bytes)\n",
+            (void *) pthread_self(), id, qos, duplicate, (char *) message, chan->name, p.size);
 
     struct message *mex = malloc(sizeof(struct message));
     mex->qos = qos;
@@ -57,7 +64,7 @@ int publish_message(struct channel *chan, uint8_t qos, void *message) {
     list_node *cursor = chan->subscribers->head;
     while (cursor) {
         struct subscriber *sub = (struct subscriber *) cursor->data;
-        if (send(sub->fd, p.data, p.size, MSG_NOSIGNAL) < 0) {
+        if (sendall(sub->fd, p.data, &p.size) < 0) {
             return -1;
         }
         if (qos == AT_LEAST_ONCE) {
@@ -67,6 +74,7 @@ int publish_message(struct channel *chan, uint8_t qos, void *message) {
         cursor = cursor->next;
     }
     free(p.data);
+    /* pthread_mutex_unlock(&chan->lock); */
     return 0;
 }
 
