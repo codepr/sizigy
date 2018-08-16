@@ -42,10 +42,10 @@ void del_subscriber(struct channel *chan, struct subscriber *subscriber) {
 
 
 int publish_message(struct channel *chan, uint8_t qos, void *message) {
-    /* pthread_mutex_lock(&chan->lock); */
     char *channel = append_string(chan->name, " ");
     uint8_t duplicate = 0;
     struct protocol_packet pp = create_sys_pubpacket(PUBLISH_MESSAGE, qos, duplicate, channel, message, 1);
+    free(channel);
     uint64_t id = pp.payload.sys_pubpacket.id;
     struct packed p = pack(pp);
 
@@ -74,7 +74,8 @@ int publish_message(struct channel *chan, uint8_t qos, void *message) {
         cursor = cursor->next;
     }
     free(p.data);
-    /* pthread_mutex_unlock(&chan->lock); */
+    // XXX check it out
+    free(pp.payload.sys_pubpacket.data);
     return 0;
 }
 

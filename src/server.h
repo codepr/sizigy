@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <pthread.h>
-#include <semaphore.h>
 #include "map.h"
 #include "util.h"
 
@@ -40,9 +39,7 @@ struct global {
     counter_t next_id;
     map *channels;
     map *ack_waiting;
-    pthread_mutex_t wlock;
-    pthread_mutex_t rlock;
-    sem_t semaphore;
+    pthread_mutex_t lock;
 };
 
 

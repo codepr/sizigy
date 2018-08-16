@@ -35,14 +35,11 @@ static void add_epollin(int efd, int fd) {
 
 
 static void set_epollout(int efd, int fd, void *data) {
-    /* pthread_mutex_lock(&(global.wlock)); */
     struct epoll_event ev;
     if (data)
         ev.data.ptr = data;
     ev.events = EPOLLOUT | EPOLLET | EPOLLONESHOT;
 
-    /* pthread_mutex_lock(&(global.wlock)); */
-    printf(" [%p] CALLING EPOLLOUT\n", (void *) pthread_self());
     if (epoll_ctl(efd, EPOLL_CTL_MOD, fd, &ev) < 0) {
         perror("epoll_ctl(2): set epollout");
     }
@@ -54,11 +51,9 @@ static void set_epollin(int efd, int fd) {
     ev.data.fd = fd;
     ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
 
-    /* pthread_mutex_lock(&(global.wlock)); */
     if (epoll_ctl(efd, EPOLL_CTL_MOD, fd, &ev) < 0) {
         perror("epoll_ctl(2): set epollin");
     }
-    /* pthread_mutex_unlock(&(global.wlock)); */
 }
 
 
@@ -187,6 +182,7 @@ static int send_data(void *arg1, int fd) {
         perror("send(2): error sending\n");
         return -1;
     }
+    free(pp.payload.sys_pubpacket.data);
     free(p.data);
     return 0;
 }
@@ -203,7 +199,6 @@ static int close_socket(void *arg1, void *arg2) {
 
 
 static int handle_request(int epollfd, int clientfd) {
-    /* pthread_mutex_lock(&(global.rlock)); */
 
     char readbuff[BUFSIZE];
     struct sockaddr_in addr;
@@ -211,6 +206,8 @@ static int handle_request(int epollfd, int clientfd) {
     ssize_t n;
 
     memset(readbuff, 0x00, BUFSIZE);
+
+    pthread_mutex_lock(&(global.lock));
 
     if ((n = recvall(clientfd, readbuff)) < 0) {
         return -1;
@@ -237,14 +234,13 @@ static int handle_request(int epollfd, int clientfd) {
     /* Unpack incoming bytes */
     struct protocol_packet p = unpack(readbuff);
 
-    printf(" [%p] type=%d opcode=%d qos=%d dup=%d data=%s\n", (void *) pthread_self(), p.type, p.opcode, p.payload.cli_pubpacket.qos, p.payload.cli_pubpacket.redelivered, p.payload.cli_pubpacket.data);
     /* Parse command according to the communication protocol */
     struct command comm = parse_protocol_command(p);
-    /* free(p.data); */  //FIXME release memory
-    struct reply reply;
-    reply.fd = clientfd;
-    reply.data = OK;       // placeholder reply
-    reply.qos = comm.qos;
+    /* free(p.data);   //FIXME release memory */
+    struct reply *reply = malloc(sizeof(struct reply));
+    reply->fd = clientfd;
+    reply->data = OK;       // placeholder reply
+    reply->qos = comm.qos;
     void *raw_chan = NULL; // placeholder for map_get
 
     switch(comm.opcode) {
@@ -252,7 +248,7 @@ static int handle_request(int epollfd, int clientfd) {
             printf("*** [%p] CREATE %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
             struct channel *channel = create_channel(comm.cmd.b.channel_name);
             map_put(global.channels, comm.cmd.b.channel_name, channel);
-            reply.type = ACK_REPLY;
+            reply->type = ACK_REPLY;
             break;
         case DELETE_CHANNEL:
             printf("*** [%p] DELETE %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
@@ -262,7 +258,7 @@ static int handle_request(int epollfd, int clientfd) {
                 destroy_channel(chan);
             }
             map_del(global.channels, comm.cmd.b.channel_name);
-            reply.type = ACK_REPLY;
+            reply->type = ACK_REPLY;
             break;
         case SUBSCRIBE_CHANNEL:
             printf("*** [%p] SUBSCRIBE %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
@@ -278,7 +274,7 @@ static int handle_request(int epollfd, int clientfd) {
             sub->qos = comm.qos;
             add_subscriber(chan, sub);
             send_queue(chan->messages, clientfd, send_data);
-            reply.type = ACK_REPLY;
+            reply->type = ACK_REPLY;
             break;
         case UNSUBSCRIBE_CHANNEL:
             printf("*** [%p] UNSUBSCRIBE %s\n", (void *) pthread_self(), comm.cmd.b.channel_name);
@@ -289,20 +285,20 @@ static int handle_request(int epollfd, int clientfd) {
                 struct subscriber sub = { clientfd, AT_MOST_ONCE, "sub" };
                 del_subscriber(chan, &sub);
             }
-            reply.type = ACK_REPLY;
+            reply->type = ACK_REPLY;
             break;
         case PUBLISH_MESSAGE:
-            reply.data = comm.cmd.a.message;
-            reply.channel = comm.cmd.a.channel_name;
-            reply.type = DATA_REPLY;
+            reply->data = comm.cmd.a.message;
+            reply->channel = comm.cmd.a.channel_name;
+            reply->type = DATA_REPLY;
             break;
         case PING:
-            reply.data = "PONG\n";
-            reply.type = PING_REPLY;
+            reply->data = "PONG\n";
+            reply->type = PING_REPLY;
             printf("*** [%p] PING from %s\n", (void *) pthread_self(), ip_buff);
             break;
         case ACK:
-            reply.type = ACK_REPLY;
+            reply->type = ACK_REPLY;
             uint64_t id = 0;
             /* Extract uint32_t ID from the payload */
             while (*comm.cmd.b.channel_name != '\0') {
@@ -315,18 +311,18 @@ static int handle_request(int epollfd, int clientfd) {
             break;
         case ERR_UNKNOWN:
             printf("*** [%p] %s", (void *) pthread_self(), E_UNKNOWN);
-            reply.type = NACK_REPLY;
-            reply.data = E_UNKNOWN;
+            reply->type = NACK_REPLY;
+            reply->data = E_UNKNOWN;
             break;
         case ERR_MISS_CHAN:
             printf("*** [%p] %s", (void *) pthread_self(), E_MISS_CHAN);
-            reply.type = NACK_REPLY;
-            reply.data = E_MISS_CHAN;
+            reply->type = NACK_REPLY;
+            reply->data = E_MISS_CHAN;
             break;
         case ERR_MISS_MEX:
             printf("*** [%p] %s", (void *) pthread_self(), E_MISS_MEX);
-            reply.type = NACK_REPLY;
-            reply.data = E_MISS_MEX;
+            reply->type = NACK_REPLY;
+            reply->data = E_MISS_MEX;
             break;
         case QUIT:
             printf("*** [%p] QUIT\n", (void *) pthread_self());
@@ -338,10 +334,20 @@ static int handle_request(int epollfd, int clientfd) {
             break;
     }
 
-    /* pthread_mutex_lock(&(global.wlock)); */
-    set_epollout(epollfd, clientfd, &reply);
-    /* pthread_mutex_unlock(&(global.wlock)); */
-    /* pthread_mutex_unlock(&(global.rlock)); */
+    set_epollout(epollfd, clientfd, reply);
+
+    if (p.opcode == PUBLISH_MESSAGE) {
+        if (p.type == SYSTEM_PACKET)
+            free(p.payload.sys_pubpacket.data);
+        else
+            free(p.payload.cli_pubpacket.data);
+    } else if (p.opcode == SUBSCRIBE_CHANNEL) {
+        free(p.payload.sub_packet.channel_name);
+    } else {
+        free(p.payload.data);
+    }
+
+    pthread_mutex_unlock(&global.lock);
 
     return 0;
 }
@@ -355,19 +361,6 @@ static void *worker(void *args) {
         perror("malloc(3) failed when attempting to allocate events buffer");
         pthread_exit(NULL);
     }
-
-    /* int epollfd; */
-    /*  */
-    /* Initialize epollfd */
-    /* if ((epollfd = epoll_create1(0)) == -1) { */
-    /*     perror("epoll_create1"); */
-    /*     exit(EXIT_FAILURE); */
-    /* } */
-    /*  */
-    /* Initialize the socket */
-    /* int fd = make_listen("127.0.0.1", "9090"); */
-    /* Set socket in EPOLLIN flag mode, ready to read data */
-    /* add_epollin(epollfd, fd); */
 
     int events_cnt;
     while ((events_cnt = epoll_wait(fds->epollfd, events, MAX_EVENTS, -1)) > 0) {
@@ -397,13 +390,7 @@ static void *worker(void *args) {
                     close(events[i].data.fd);
                 }
             } else if (events[i].events & EPOLLOUT) {
-
-                /* printf("LOCKING\n"); */
-                /* pthread_mutex_lock(&(global.rlock)); */
-
                 struct reply *reply = (struct reply *) events[i].data.ptr;
-                printf(" [%p] EPOLLOUT %s\n", (void *) pthread_self(), reply->data);
-                printf(" [%p] REP TYPE %d\n", (void *) pthread_self(), reply->type);
                 ssize_t sent;
                 struct protocol_packet pp = create_data_packet(ACK, OK);
                 struct packed p = pack(pp);
@@ -427,8 +414,6 @@ static void *worker(void *args) {
                     free(p.data);
                     p = pack(pp);
                     if ((sent = sendall(reply->fd, p.data, &p.size)) < 0) {
-                    /* ssize_t s = 5; */
-                    /* if ((sent = sendall(reply->fd, "PONG\n", &s)) < 0) { */
                         perror("send(2): can't write on socket descriptor");
                         return NULL;
                     }
@@ -446,28 +431,13 @@ static void *worker(void *args) {
                     }
                     struct channel *chan = (struct channel *) map_get(global.channels, reply->channel);
                     publish_message(chan, reply->qos, strdup(reply->data));
-                    /* free_reply(reply); */
                 }
                 free(p.data);
                 // Rearm descriptor on EPOLLIN
                 set_epollin(fds->epollfd, reply->fd);
-                /* pthread_mutex_unlock(&(global.wlock)); */
-
-                /* printf("UNLOCKING\n"); */
-                /* pthread_mutex_unlock(&(global.rlock)); */
+                free(reply);
             }
-
         }
-        /* usleep(500); */
-
-        /* tnow = usec(); */
-        /* if (tnow - tprev < 1000) { */
-        /*     struct timespec spec; */
-        /*     spec.tv_nsec = 1000 - (tnow - tprev); */
-        /*     nanosleep(&spec, NULL); */
-        /* } else { */
-        /*     tprev = tnow; */
-        /* } */
     }
 
     if (events_cnt == 0) {
@@ -493,9 +463,7 @@ int start_server(void) {
     global.channels = map_create();
     global.ack_waiting = map_create();
     init_counter(&global.next_id);  // counter to get message id, should be enclosed inside locks
-    pthread_mutex_init(&(global.rlock), NULL);
-    pthread_mutex_init(&(global.wlock), NULL);
-    sem_init(&global.semaphore, 0, 0);
+    pthread_mutex_init(&(global.lock), NULL);
     int epollfd;
 
     /* Initialize epollfd */
@@ -516,48 +484,16 @@ int start_server(void) {
     /* I/0 thread pool initialization, passing a the pair {epollfd, fd} sockets
        for each one. Every worker handle input from clients, accepting
        connections and sending out data when a socket is ready to write */
-    /* struct socks fds = { epollfd, fd }; */
+    struct socks fds = { epollfd, fd };
 
-    struct socks fds[EPOLL_WORKERS];
-
-    for (int i = 0; i < EPOLL_WORKERS; ++i) {
-        /* int epollfd; */
-        /* #<{(| Initialize epollfd |)}># */
-        /* if ((epollfd = epoll_create1(0)) == -1) { */
-        /*     perror("epoll_create1"); */
-        /*     exit(EXIT_FAILURE); */
-        /* } */
-        /*  */
-        /* #<{(| Initialize the socket |)}># */
-        /* int fd = make_listen("127.0.0.1", "9090"); */
-        /* add_epollin(epollfd, fd); */
-        /*  */
-        fds[i].epollfd = epollfd;
-        fds[i].serversock = fd;
-
-        pthread_create(&workers[i], NULL, worker, (void *) &fds[0]);
-    }
+    for (int i = 0; i < EPOLL_WORKERS; ++i)
+        pthread_create(&workers[i], NULL, worker, (void *) &fds);
 
     printf("*** [%p] Sizigy v0.1.0\n", (void *) pthread_self());
     printf("*** [%p] Starting server on 127.0.0.1:9090\n", (void *) pthread_self());
 
-    /* Initialize epollfd */
-    /* if ((epollfd = epoll_create1(0)) == -1) { */
-    /*     perror("epoll_create1"); */
-    /*     exit(EXIT_FAILURE); */
-    /* } */
-
-    /* Initialize the socket */
-    /* int fd = make_listen("127.0.0.1", "9090"); */
-    /* int fd = make_listen("127.0.0.1", "9090"); */
-
-    /* add_epollin(epollfd, fd); */
-
-    /* struct socks sf = { epollfd, fd }; */
-
     /* Use main thread as a worker too */
-    worker(&fds[0]);
-    /* worker(&sf); */
+    worker(&fds);
     return 0;
 }
 
@@ -583,7 +519,6 @@ int recvall(int sfd, char *buf) {
     for (;;) {
         if ((n = recv(sfd, buf+total, sizeof(buf) - 1, 0)) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                /* printf(">>> Read all data=%s size=%d\n", buf, total); */
                 break;
             } else {
                 perror("recv(2): error reading data\n");
@@ -595,6 +530,5 @@ int recvall(int sfd, char *buf) {
         }
         total += n;
     }
-    /* printf("TOTAL %d\n", total); */
     return total;
 }

@@ -52,7 +52,6 @@ struct command parse_protocol_command(struct protocol_packet packet) {
                 // XXX should check strictly for the only two options available
                 comm.qos = packet.payload.cli_pubpacket.qos;
                 strcpy(tmp, packet.payload.cli_pubpacket.data);
-                printf(" [%p] tmp=%s\n", (void *) pthread_self(), tmp);
             }
             remove_newline(tmp);
             char *channel = strtok(tmp, " ");
