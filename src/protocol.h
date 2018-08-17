@@ -70,6 +70,8 @@ struct packed pack(struct protocol_packet);
 struct protocol_packet unpack(char *);
 struct protocol_packet create_data_packet(uint8_t, char *);
 struct protocol_packet create_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
+struct packed pack_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
+struct packed pack_data_packet(uint8_t, char *);
 
 
 #endif

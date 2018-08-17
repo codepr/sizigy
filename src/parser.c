@@ -58,13 +58,13 @@ struct command parse_protocol_command(struct protocol_packet packet) {
             if (!channel)
                 comm.opcode = ERR_MISS_CHAN;
             else {
-                channel_name = malloc(sizeof(*channel));
+                channel_name = malloc(strlen(channel));
                 strcpy(channel_name, channel);
                 char *message_str = strtok(NULL, "\0");
                 if (!message_str)
                     comm.opcode = ERR_MISS_MEX;
                 else {
-                    char *message = malloc(sizeof(*message_str));
+                    char *message = malloc(strlen(message_str));
                     strcpy(message, message_str);
                     struct action a;
                     a.channel_name = channel_name;

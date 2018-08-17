@@ -162,6 +162,7 @@ struct packed pack(struct protocol_packet packet) {
             *((uint8_t *) type) = packet.type;
             *((uint8_t *) opcode) = packet.opcode;
             memcpy(data, p.data, p.size);
+            free(p.data);
             packed.size = tlen;
             packed.data = raw;
             break;
@@ -183,6 +184,7 @@ struct packed pack(struct protocol_packet packet) {
             *((uint8_t *) type) = packet.type;
             *((uint8_t *) opcode) = packet.opcode;
             memcpy(data, p.data, p.size);
+            free(p.data);
             packed.size = tlen;
             packed.data = raw;
             break;
@@ -247,7 +249,7 @@ struct protocol_packet create_data_packet(uint8_t opcode, char *data) {
 
 
 struct protocol_packet create_sys_pubpacket(uint8_t opcode, uint8_t qos, uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
-    uint64_t id = 0;
+    uint64_t id = read_counter(&global.next_id);
     if ((opcode == DATA || opcode == PUBLISH_MESSAGE) && incr == 1) {
         id = incr_read(&global.next_id);
     }
@@ -258,4 +260,20 @@ struct protocol_packet create_sys_pubpacket(uint8_t opcode, uint8_t qos, uint8_t
     packet.opcode = opcode;
     packet.payload.sys_pubpacket = sys_pubpacket;
     return packet;
+}
+
+
+struct packed pack_sys_pubpacket(uint8_t opcode, uint8_t qos, uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
+    struct protocol_packet p = create_sys_pubpacket(opcode, qos, redelivered, channel_name, message, incr);
+    struct packed packed = pack(p);
+    free(p.payload.sys_pubpacket.data);
+    return packed;
+}
+
+
+struct packed pack_data_packet(uint8_t opcode, char *data) {
+    struct protocol_packet p = create_data_packet(opcode, data);
+    struct packed packed = pack(p);
+    free(p.payload.data);
+    return packed;
 }

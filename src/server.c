@@ -212,10 +212,6 @@ static int handle_request(int epollfd, int clientfd) {
     if ((n = recvall(clientfd, readbuff)) < 0) {
         return -1;
     }
-    /* if ((n = recv(clientfd, readbuff, sizeof(readbuff) - 1, 0)) < 0) { */
-    /*     return -1; */
-    /* } */
-
     if (n == 0) {
         return 0;
     }
@@ -226,7 +222,7 @@ static int handle_request(int epollfd, int clientfd) {
         return -1;
     }
 
-    char ip_buff[INET_ADDRSTRLEN+1];
+    char ip_buff[INET_ADDRSTRLEN + 1];
     if (inet_ntop(AF_INET, &addr.sin_addr, ip_buff, sizeof(ip_buff)) == NULL) {
         return -1;
     }
@@ -298,9 +294,9 @@ static int handle_request(int epollfd, int clientfd) {
             printf("*** [%p] PING from %s\n", (void *) pthread_self(), ip_buff);
             break;
         case ACK:
-            reply->type = ACK_REPLY;
+            reply->type = NO_REPLY;
             uint64_t id = 0;
-            /* Extract uint32_t ID from the payload */
+            /* Extract uint64_t ID from the payload */
             while (*comm.cmd.b.channel_name != '\0') {
                 id = (id * 10) + (*comm.cmd.b.channel_name - '0');
                 comm.cmd.b.channel_name++;
@@ -336,18 +332,20 @@ static int handle_request(int epollfd, int clientfd) {
 
     set_epollout(epollfd, clientfd, reply);
 
+    pthread_mutex_unlock(&global.lock);
+
     if (p.opcode == PUBLISH_MESSAGE) {
         if (p.type == SYSTEM_PACKET)
             free(p.payload.sys_pubpacket.data);
         else
             free(p.payload.cli_pubpacket.data);
-    } else if (p.opcode == SUBSCRIBE_CHANNEL) {
+    } else if (p.opcode == SUBSCRIBE_CHANNEL
+            || p.opcode == UNSUBSCRIBE_CHANNEL
+            || p.opcode == ACK) {
         free(p.payload.sub_packet.channel_name);
     } else {
         free(p.payload.data);
     }
-
-    pthread_mutex_unlock(&global.lock);
 
     return 0;
 }
@@ -417,8 +415,9 @@ static void *worker(void *args) {
                         perror("send(2): can't write on socket descriptor");
                         return NULL;
                     }
-                }
-                else {
+                } else if (reply->type == NO_REPLY) {
+                    // Ignore
+                } else {
                     // Reply to original sender
                     if ((sent = sendall(reply->fd, p.data, &p.size)) < 0) {
                             perror("send(2): can't write on socket descriptor");
@@ -435,6 +434,9 @@ static void *worker(void *args) {
                 free(p.data);
                 // Rearm descriptor on EPOLLIN
                 set_epollin(fds->epollfd, reply->fd);
+                // Clean up reply
+                if (reply->type == DATA_REPLY)
+                    free_reply(reply);
                 free(reply);
             }
         }
@@ -504,7 +506,14 @@ int sendall(int sfd, char *buf, ssize_t *len) {
     int n;
     while (total < *len) {
         n = send(sfd, buf + total, bytesleft, MSG_NOSIGNAL);
-        if (n == -1) break;
+        if (n == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                break;
+            else {
+                perror("send(2): error sending data\n");
+                return -1;
+            }
+        }
         total += n;
         bytesleft -= n;
     }

@@ -42,41 +42,57 @@ void del_subscriber(struct channel *chan, struct subscriber *subscriber) {
 
 
 int publish_message(struct channel *chan, uint8_t qos, void *message) {
+    int ret = 0;
     char *channel = append_string(chan->name, " ");
     uint8_t duplicate = 0;
     struct protocol_packet pp = create_sys_pubpacket(PUBLISH_MESSAGE, qos, duplicate, channel, message, 1);
-    free(channel);
     uint64_t id = pp.payload.sys_pubpacket.id;
     struct packed p = pack(pp);
 
     printf("*** [%p] PUBLISH (id=%ld qos=%d redelivered=%d message=%s) on channel %s (%ld bytes)\n",
             (void *) pthread_self(), id, qos, duplicate, (char *) message, chan->name, p.size);
 
-    struct message *mex = malloc(sizeof(struct message));
-    mex->qos = qos;
-    mex->id = id;
-    mex->channel = channel;
-    mex->payload = message;
+    /* struct message *mex = malloc(sizeof(struct message)); */
+    /* mex->qos = qos; */
+    /* mex->id = id; */
+    /* mex->channel = channel; */
+    /* mex->payload = message; */
     /* Add message to the queue associated to the channel */
-    enqueue(chan->messages, mex);
+    /* enqueue(chan->messages, &pp); */
 
     /* Iterate through all the subscribers to send them the message */
     list_node *cursor = chan->subscribers->head;
     while (cursor) {
         struct subscriber *sub = (struct subscriber *) cursor->data;
-        if (sendall(sub->fd, p.data, &p.size) < 0) {
-            return -1;
+        /* Check if subscriber has a qos != qos param */
+        if (sub->qos > qos) {
+            struct packed p_ack = pack_sys_pubpacket(PUBLISH_MESSAGE, sub->qos, duplicate, channel, message, 0);
+            if (sendall(sub->fd, p_ack.data, &p_ack.size) < 0) {
+                ret = -1;
+                free(p_ack.data);
+                goto cleanup;
+            }
+            free(p_ack.data);
         }
-        if (qos == AT_LEAST_ONCE) {
+        else {
+            if (sendall(sub->fd, p.data, &p.size) < 0) {
+                ret = -1;
+                goto cleanup;
+            }
+        }
+        if (qos == AT_LEAST_ONCE || sub->qos == AT_LEAST_ONCE) {
             /* Add message to the waiting ACK map */
             map_put(global.ack_waiting, &id, &pp);
         }
         cursor = cursor->next;
     }
-    free(p.data);
-    // XXX check it out
+cleanup:
+    free(channel);
     free(pp.payload.sys_pubpacket.data);
-    return 0;
+    free(p.data);
+    free(message);
+    // XXX check it out
+    return ret;
 }
 
 
