@@ -21,25 +21,25 @@ typedef struct {
 
 
 /*
- * An hashmap has some maximum size and current size, as well as the data to
+ * An hashmap_t has some maximum size and current size, as well as the data to
  * hold.
  */
 typedef struct {
     unsigned long table_size;
     unsigned long size;
     map_entry *entries;
-} map;
+} map_t;
 
 
-/* Map API */
-map *map_create(void);
-void map_release(map *);
-int map_put(map *, void *, void *);
-void *map_get(map *, void *);
-map_entry *map_get_entry(map *, void *);
-int map_del(map *, void *);
-int map_iterate2(map *, func, void *);
-int map_iterate3(map *, func3, void *, void *);
+/* map_t API */
+map_t *map_create(void);
+void map_release(map_t *);
+int map_put(map_t *, void *, void *);
+void *map_get(map_t *, void *);
+map_entry *map_get_entry(map_t *, void *);
+int map_del(map_t *, void *);
+int map_iterate2(map_t *, func, void *);
+int map_iterate3(map_t *, func3, void *, void *);
 
 unsigned long crc32(const unsigned char *, unsigned int);
 

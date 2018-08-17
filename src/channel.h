@@ -2,24 +2,14 @@
 #define CHANNEL_H
 
 #include <stdint.h>
-#include <pthread.h>
 #include "list.h"
 #include "queue.h"
 
 
 struct channel {
     char *name;
-    list *subscribers;
-    queue *messages;
-    pthread_mutex_t lock;
-};
-
-
-struct message {
-    uint8_t qos;
-    uint64_t id;
-    char *channel;
-    char *payload;
+    list_t *subscribers;
+    queue_t *messages;
 };
 
 

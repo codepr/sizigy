@@ -1,6 +1,9 @@
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include "util.h"
+#include "server.h"
 
 
 void remove_newline(char *str) {
@@ -11,6 +14,10 @@ void remove_newline(char *str) {
 char *append_string(const char *str, const char *token) {
     size_t len = strlen(str) + strlen(token);
     char *ret = malloc(len * sizeof(char) + 1);
+    if (!ret) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
     *ret = '\0';
     return strcat(strcat(ret, str), token);
 }
@@ -49,3 +56,25 @@ uint64_t read_counter(counter_t *c) {
   pthread_mutex_unlock(&c->lock);
   return rc;
 }
+
+
+void s_log(uint8_t level, const char *info, ...) {
+    /* Print log only if level is the same of the instance loglevel */
+    if (level <= global.loglevel) {
+        va_list argptr;
+        va_start(argptr, info);
+        char time_buff[50];
+        char prefix[50];
+        time_t now = time(0);
+        strftime(prefix, 50, "%Y-%m-%d %H:%M:%S", localtime(&now));
+        sprintf(time_buff, " ");
+        char content[strlen(prefix) + strlen(info) + strlen(time_buff)];
+        memset(content, 0x00, strlen(content));
+        strcat(content, prefix);
+        strcat(content, time_buff);
+        strcat(content, info);
+        vfprintf(stdout, content, argptr);
+        va_end(argptr);
+    }
+}
+

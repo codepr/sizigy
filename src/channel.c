@@ -22,10 +22,15 @@ static int sub_compare(void *arg1, void *arg2) {
 
 struct channel *create_channel(char *name) {
    struct channel *channel = malloc(sizeof(struct channel));
+
+   if (!channel) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
    channel->name = name;
    channel->subscribers = list_create();
    channel->messages = create_queue();
-   pthread_mutex_init(&(channel->lock), NULL);
    return channel;
 }
 
@@ -45,53 +50,49 @@ int publish_message(struct channel *chan, uint8_t qos, void *message) {
     int ret = 0;
     char *channel = append_string(chan->name, " ");
     uint8_t duplicate = 0;
-    struct protocol_packet pp = create_sys_pubpacket(PUBLISH_MESSAGE, qos, duplicate, channel, message, 1);
-    uint64_t id = pp.payload.sys_pubpacket.id;
-    struct packed p = pack(pp);
+    protocol_packet_t *pp = create_sys_pubpacket_p(PUBLISH_MESSAGE, qos, duplicate, channel, message, 1);
+    uint64_t id = pp->payload.sys_pubpacket.id;
+    packed_t p = pack(*pp);
+    packed_t p_ack = pack_sys_pubpacket(PUBLISH_MESSAGE, AT_LEAST_ONCE, duplicate, channel, message, 0);
 
-    printf("*** [%p] PUBLISH (id=%ld qos=%d redelivered=%d message=%s) on channel %s (%ld bytes)\n",
-            (void *) pthread_self(), id, qos, duplicate, (char *) message, chan->name, p.size);
+    DEBUG("*** PUBLISH (id=%ld qos=%d redelivered=%d message=%s) on channel %s (%ld bytes)\n",
+            id, qos, duplicate, (char *) message, chan->name, p.size);
 
-    /* struct message *mex = malloc(sizeof(struct message)); */
-    /* mex->qos = qos; */
-    /* mex->id = id; */
-    /* mex->channel = channel; */
-    /* mex->payload = message; */
-    /* Add message to the queue associated to the channel */
-    /* enqueue(chan->messages, &pp); */
+    /* Add message to the queue_t associated to the channel */
+    enqueue(chan->messages, pp);
 
     /* Iterate through all the subscribers to send them the message */
     list_node *cursor = chan->subscribers->head;
+    DEBUG("About to send, len %d\n", chan->subscribers->len);
     while (cursor) {
         struct subscriber *sub = (struct subscriber *) cursor->data;
         /* Check if subscriber has a qos != qos param */
         if (sub->qos > qos) {
-            struct packed p_ack = pack_sys_pubpacket(PUBLISH_MESSAGE, sub->qos, duplicate, channel, message, 0);
+            DEBUG("Sending AT_LEAST_ONCE\n");
             if (sendall(sub->fd, p_ack.data, &p_ack.size) < 0) {
                 ret = -1;
-                free(p_ack.data);
+                DEBUG("Can't send data to AT_LEAST_ONCE subscriber\n");
                 goto cleanup;
             }
-            free(p_ack.data);
         }
         else {
+            DEBUG("Sending normal\n");
             if (sendall(sub->fd, p.data, &p.size) < 0) {
                 ret = -1;
+                DEBUG("Can't send data to AT_MOST_ONCE subscriber\n");
                 goto cleanup;
             }
-        }
-        if (qos == AT_LEAST_ONCE || sub->qos == AT_LEAST_ONCE) {
-            /* Add message to the waiting ACK map */
-            map_put(global.ack_waiting, &id, &pp);
         }
         cursor = cursor->next;
     }
 cleanup:
-    free(channel);
-    free(pp.payload.sys_pubpacket.data);
+    /* if (qos == AT_LEAST_ONCE || sub->qos == AT_LEAST_ONCE) { */
+    /*     #<{(| Add message to the waiting ACK map_t |)}># */
+    /*     map_put(global.ack_waiting, &id, pp); */
+    /* } */
     free(p.data);
+    free(p_ack.data);
     free(message);
-    // XXX check it out
     return ret;
 }
 

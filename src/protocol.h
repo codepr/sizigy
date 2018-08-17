@@ -48,7 +48,7 @@ struct cli_pubpacket {
 };
 
 
-struct protocol_packet {
+typedef struct {
     uint8_t type;
     uint8_t opcode;
     union {
@@ -57,21 +57,22 @@ struct protocol_packet {
         struct cli_pubpacket cli_pubpacket;
         char *data;
     } payload;
-};
+} protocol_packet_t;
 
 
-struct packed {
+typedef struct {
     ssize_t size;
     char *data;
-};
+} packed_t;
 
 
-struct packed pack(struct protocol_packet);
-struct protocol_packet unpack(char *);
-struct protocol_packet create_data_packet(uint8_t, char *);
-struct protocol_packet create_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
-struct packed pack_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
-struct packed pack_data_packet(uint8_t, char *);
+packed_t pack(protocol_packet_t);
+protocol_packet_t unpack(char *);
+protocol_packet_t create_data_packet(uint8_t, char *);
+protocol_packet_t create_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
+protocol_packet_t *create_sys_pubpacket_p(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
+packed_t pack_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
+packed_t pack_data_packet(uint8_t, char *);
 
 
 #endif

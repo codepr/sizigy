@@ -7,10 +7,14 @@
 #include "util.h"
 
 
-static struct packed pack_sub_packet(struct sub_packet packet) {
+static packed_t pack_sub_packet(struct sub_packet packet) {
     ssize_t dlen = strlen(packet.channel_name);
     uint32_t tlen = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint64_t) + dlen;
     char *raw = malloc(sizeof(char) * tlen);
+    if (!raw) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
     char *meta = raw;
     char *qos = raw + sizeof(uint32_t);
     char *offset = raw + sizeof(uint8_t);
@@ -20,7 +24,7 @@ static struct packed pack_sub_packet(struct sub_packet packet) {
     *((uint8_t *) qos) = packet.qos;
     *((uint64_t *) offset) = packet.offset;
     memcpy(channel_name, packet.channel_name, dlen);
-    struct packed packed = { tlen, raw };
+    packed_t packed = { tlen, raw };
     return packed;
 }
 
@@ -38,16 +42,28 @@ static struct sub_packet unpack_sub_packet(char *bytes) {
     packet.qos = *((uint8_t *) qos);
     packet.offset = *((uint64_t *) offset);
     packet.channel_name = malloc((data_len + 1) * sizeof(char));
+
+    if (!packet.channel_name) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
     memcpy(packet.channel_name, data, data_len);
     packet.channel_name[data_len] = '\0';
     return packet;
 }
 
 
-static struct packed pack_syspubpacket(struct sys_pubpacket packet) {
+static packed_t pack_syspubpacket(struct sys_pubpacket packet) {
     ssize_t dlen = strlen(packet.data);
     uint32_t tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + sizeof(uint64_t) + dlen;
     char *raw = malloc(sizeof(char) * tlen);
+
+    if (!raw) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
     char *meta = raw;
     char *qos = raw + sizeof(uint32_t);
     char *redelivered = qos + sizeof(uint8_t);
@@ -59,7 +75,7 @@ static struct packed pack_syspubpacket(struct sys_pubpacket packet) {
     *((uint8_t *) redelivered) = packet.redelivered;
     *((uint64_t *) id) = packet.id;
     memcpy(data, packet.data, dlen);
-    struct packed packed = { tlen, raw };
+    packed_t packed = { tlen, raw };
     return packed;
 }
 
@@ -79,6 +95,12 @@ static struct sys_pubpacket unpack_sys_pubpacket(char *bytes) {
     packet.redelivered = *((uint8_t *) redelivered);
     packet.id = *((uint64_t *) id);
     packet.data = malloc((data_len + 1) * sizeof(char));
+
+    if (!packet.data) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
     memcpy(packet.data, data, data_len);
     packet.data[data_len] = '\0';
     return packet;
@@ -98,22 +120,28 @@ static struct cli_pubpacket unpack_cli_pubpacket(char *bytes) {
     packet.qos = *((uint8_t *) qos);
     packet.redelivered = *((uint8_t *) redelivered);
     packet.data = malloc((data_len + 1) * sizeof(char));
+
+    if (!packet.data) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
     memcpy(packet.data, data, data_len);
     packet.data[data_len] = '\0';
     return packet;
 }
 
 
-struct packed pack(struct protocol_packet packet) {
-    struct packed packed;
+packed_t pack(protocol_packet_t packet) {
+    packed_t packed;
     ssize_t dlen = 0;
     uint32_t tlen = 0;
-    char *raw;
-    char *meta;
-    char *type;
-    char *opcode;
-    char *data;
-    struct packed p;
+    char *raw = NULL;
+    char *meta = NULL;
+    char *type = NULL;
+    char *opcode = NULL;
+    char *data = NULL;
+    packed_t p;
 
     switch (packet.opcode) {
         case ACK:
@@ -130,6 +158,12 @@ struct packed pack(struct protocol_packet packet) {
             tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + dlen;
             // bytes to be allocated + size of the data field
             raw = malloc(sizeof(char) * tlen);
+
+            if (!raw) {
+                perror("malloc(3) failed");
+                exit(EXIT_FAILURE);
+            }
+
             opcode = raw;
             // fix index just after size of the data part
             meta = raw + sizeof(uint8_t);
@@ -153,6 +187,12 @@ struct packed pack(struct protocol_packet packet) {
             tlen = (2 * sizeof(uint8_t)) + sizeof(uint64_t) + dlen;
             // bytes to be allocated + size of the data field
             raw = malloc(sizeof(char) * tlen);
+
+            if (!raw) {
+                perror("malloc(3) failed");
+                exit(EXIT_FAILURE);
+            }
+
             // fix index just after size of the data part
             opcode = raw;
             // move index after data size value, where opcode start
@@ -175,6 +215,12 @@ struct packed pack(struct protocol_packet packet) {
             tlen = (2 * sizeof(uint8_t)) + dlen;
             // bytes to be allocated + size of the data field
             raw = malloc(sizeof(char) * tlen);
+
+            if (!raw) {
+                perror("malloc(3) failed");
+                exit(EXIT_FAILURE);
+            }
+
             // fix index just after size of the data part
             opcode = raw;
             // move index after data size value, where opcode start
@@ -193,12 +239,12 @@ struct packed pack(struct protocol_packet packet) {
 }
 
 
-struct protocol_packet unpack(char *bytes) {
-    struct protocol_packet packet;
+protocol_packet_t unpack(char *bytes) {
+    protocol_packet_t packet;
     char *opcode = bytes;
-    char *meta;
-    char *type;
-    char *data;
+    char *meta = NULL;
+    char *type = NULL;
+    char *data = NULL;
     packet.opcode = *((uint8_t *) opcode);
 
     switch (packet.opcode) {
@@ -216,6 +262,12 @@ struct protocol_packet unpack(char *bytes) {
             ssize_t data_len = *((uint32_t *) meta);
             packet.type = *((uint8_t *) type);
             packet.payload.data = malloc((data_len + 1) * sizeof(char));
+
+            if (!packet.payload.data) {
+                perror("malloc(3) failed");
+                exit(EXIT_FAILURE);
+            }
+
             memcpy(packet.payload.data, data, data_len);
             packet.payload.data[data_len] = '\0';
             break;
@@ -239,8 +291,8 @@ struct protocol_packet unpack(char *bytes) {
 }
 
 
-struct protocol_packet create_data_packet(uint8_t opcode, char *data) {
-    struct protocol_packet packet;
+protocol_packet_t create_data_packet(uint8_t opcode, char *data) {
+    protocol_packet_t packet;
     packet.type = SYSTEM_PACKET;
     packet.opcode = opcode;
     packet.payload.data = data;
@@ -248,14 +300,14 @@ struct protocol_packet create_data_packet(uint8_t opcode, char *data) {
 }
 
 
-struct protocol_packet create_sys_pubpacket(uint8_t opcode, uint8_t qos, uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
+protocol_packet_t create_sys_pubpacket(uint8_t opcode, uint8_t qos, uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
     uint64_t id = read_counter(&global.next_id);
     if ((opcode == DATA || opcode == PUBLISH_MESSAGE) && incr == 1) {
         id = incr_read(&global.next_id);
     }
     char *data = append_string(channel_name, message);
     struct sys_pubpacket sys_pubpacket = { qos, redelivered, id, data };
-    struct protocol_packet packet;
+    protocol_packet_t packet;
     packet.type = SYSTEM_PACKET;
     packet.opcode = opcode;
     packet.payload.sys_pubpacket = sys_pubpacket;
@@ -263,17 +315,36 @@ struct protocol_packet create_sys_pubpacket(uint8_t opcode, uint8_t qos, uint8_t
 }
 
 
-struct packed pack_sys_pubpacket(uint8_t opcode, uint8_t qos, uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
-    struct protocol_packet p = create_sys_pubpacket(opcode, qos, redelivered, channel_name, message, incr);
-    struct packed packed = pack(p);
+protocol_packet_t *create_sys_pubpacket_p(uint8_t opcode, uint8_t qos, uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
+    uint64_t id = read_counter(&global.next_id);
+    if ((opcode == DATA || opcode == PUBLISH_MESSAGE) && incr == 1) {
+        id = incr_read(&global.next_id);
+    }
+    char *data = append_string(channel_name, message);
+    struct sys_pubpacket sys_pubpacket = { qos, redelivered, id, data };
+    protocol_packet_t *packet = malloc(sizeof(protocol_packet_t));
+    if (!packet) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+    packet->type = SYSTEM_PACKET;
+    packet->opcode = opcode;
+    packet->payload.sys_pubpacket = sys_pubpacket;
+    return packet;
+}
+
+
+packed_t pack_sys_pubpacket(uint8_t opcode, uint8_t qos, uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
+    protocol_packet_t p = create_sys_pubpacket(opcode, qos, redelivered, channel_name, message, incr);
+    packed_t packed = pack(p);
     free(p.payload.sys_pubpacket.data);
     return packed;
 }
 
 
-struct packed pack_data_packet(uint8_t opcode, char *data) {
-    struct protocol_packet p = create_data_packet(opcode, data);
-    struct packed packed = pack(p);
+packed_t pack_data_packet(uint8_t opcode, char *data) {
+    protocol_packet_t p = create_data_packet(opcode, data);
+    packed_t packed = pack(p);
     free(p.payload.data);
     return packed;
 }

@@ -12,7 +12,7 @@ const unsigned int MAX_CHAIN_LENGTH = 8;
 /*
  * Hashing function for a string
  */
-static unsigned int hashmap_hash_int(map *m, char *keystr) {
+static unsigned int hashmap_hash_int(map_t *m, char *keystr) {
 
     unsigned long key = CRC32((unsigned char *) (keystr), strlen(keystr));
 
@@ -37,7 +37,7 @@ static unsigned int hashmap_hash_int(map *m, char *keystr) {
  * Return the integer of the location in entries to store the point to the item,
  * or MAP_FULL.
  */
-static int hashmap_hash(map *in, void *key) {
+static int hashmap_hash(map_t *in, void *key) {
     /* If full, return immediately */
     if (in->size >= (in->table_size / 2)) return MAP_FULL;
     /* Find the best index */
@@ -60,7 +60,7 @@ static int hashmap_hash(map *in, void *key) {
 /*
  * Doubles the size of the hashmap, and rehashes all the elements
  */
-static int hashmap_rehash(map *m) {
+static int hashmap_rehash(map_t *m) {
     unsigned long old_size;
     map_entry *curr;
 
@@ -94,11 +94,11 @@ static int hashmap_rehash(map *m) {
 
 
 /*
- * Return an empty hashmap, or NULL on failure. The newly create hashmap is
+ * Return an empty hashmap, or NULL on failure. The newly create hashmap_t is
  * dynamically allocated on the heap memory, so it must be released manually.
  */
-map *map_create(void) {
-    map *m = malloc(sizeof(map));
+map_t *map_create(void) {
+    map_t *m = malloc(sizeof(map_t));
     if(!m) return NULL;
 
     m->entries = (map_entry *) calloc(INITIAL_SIZE, sizeof(map_entry));
@@ -115,9 +115,9 @@ map *map_create(void) {
 
 
 /*
- * Add a pointer to the hashmap with some key
+ * Add a pointer to the hashmap_t with some key
  */
-int map_put(map *m, void *key, void *val) {
+int map_put(map_t *m, void *key, void *val) {
     // Acquire writing lock
     /* pthread_mutex_lock(&(m->wlock)); */
     /* Find a place to put our value */
@@ -142,9 +142,9 @@ int map_put(map *m, void *key, void *val) {
 
 
 /*
- * Get your pointer out of the hashmap with a key
+ * Get your pointer out of the hashmap_t with a key
  */
-void *map_get(map *m, void *key) {
+void *map_get(map_t *m, void *key) {
     /* Find data location */
     int curr = hashmap_hash_int(m, key);
     /* Linear probing, if necessary */
@@ -163,7 +163,7 @@ void *map_get(map *m, void *key) {
 /*
  * Return the key-value pair represented by a key in the map
  */
-map_entry *map_get_entry(map *m, void *key) {
+map_entry *map_get_entry(map_t *m, void *key) {
     /* Find data location */
     int curr = hashmap_hash_int(m, key);
 
@@ -184,7 +184,7 @@ map_entry *map_get_entry(map *m, void *key) {
 /*
  * Remove an element with that key from the map
  */
-int map_del(map *m, void *key) {
+int map_del(map_t *m, void *key) {
     // Acquire writing lock
     /* pthread_mutex_lock(&(m->wlock)); */
     /* Find key */
@@ -215,7 +215,7 @@ int map_del(map *m, void *key) {
  * additional any_t argument is passed to the function as its first
  * argument and the pair is the second.
  */
-int map_iterate2(map *m, func f, void *arg1) {
+int map_iterate2(map_t *m, func f, void *arg1) {
     /* On empty hashmap, return immediately */
     if (m->size <= 0) return MAP_ERR;
     /* Linear probing */
@@ -235,7 +235,7 @@ int map_iterate2(map *m, func f, void *arg1) {
  * additional any_t argument is passed to the function as its first
  * argument and the pair is the second.
  */
-int map_iterate3(map *m, func3 f, void *arg1, void *arg2) {
+int map_iterate3(map_t *m, func3 f, void *arg1, void *arg2) {
     /* On empty hashmap, return immediately */
     if (m->size <= 0) return MAP_ERR;
     /* Linear probing */
@@ -250,7 +250,7 @@ int map_iterate3(map *m, func3 f, void *arg1, void *arg2) {
 }
 
 
-/* callback function used with iterate to clean up the hashmap */
+/* callback function used with iterate to clean up the hashmap_t */
 static int destroy(void *t1, void *t2) {
 
     map_entry *kv = (map_entry *) t2;
@@ -267,8 +267,8 @@ static int destroy(void *t1, void *t2) {
     return MAP_OK;
 }
 
-/* Deallocate the hashmap */
-void map_release(map *m){
+/* Deallocate the hashmap_t */
+void map_release(map_t *m){
     map_iterate2(m, destroy, NULL);
     if (m) {
         if (m->entries)

@@ -15,15 +15,15 @@ typedef struct {
     list_node *head;
     list_node *tail;
     unsigned long len;
-} list;
+} list_t;
 
 typedef int (*compare_func)(void *, void *);
 
-list *list_create(void);
-list *list_attach(list *, list_node *, unsigned long);
-void list_release(list *);
-list *list_head_insert(list *, void *);
-list *list_tail_insert(list *, void *);
+list_t *list_create(void);
+list_t *list_attach(list_t *, list_node *, unsigned long);
+void list_release(list_t *);
+list_t *list_head_insert(list_t *, void *);
+list_t *list_tail_insert(list_t *, void *);
 list_node *list_remove_node(list_node *, list_node *, compare_func);
 
 

@@ -2,8 +2,8 @@
 #include "queue.h"
 
 
-queue *create_queue(void) {
-    queue *q = calloc(1, sizeof(queue));
+queue_t *create_queue(void) {
+    queue_t *q = calloc(1, sizeof(queue_t));
     if (!q) return NULL;
     q->len = 0;
     q->front = q->rear = NULL;
@@ -15,7 +15,7 @@ queue *create_queue(void) {
 }
 
 
-void release_queue(queue *q) {
+void release_queue(queue_t *q) {
     if (q != NULL) {
         /* pthread_mutex_lock(&(q->lock)); */
         while(q->len > 0) {
@@ -30,10 +30,15 @@ void release_queue(queue *q) {
 
 
 /* insert data on the rear item */
-void enqueue(queue *q, void *data) {
+void enqueue(queue_t *q, void *data) {
 
     pthread_mutex_lock(&(q->lock));
     queue_item *new_item = malloc(sizeof(queue_item));
+
+    if (!new_item) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
 
     new_item->next = NULL;
     new_item->data = data;
@@ -53,7 +58,7 @@ void enqueue(queue *q, void *data) {
 
 
 /* remove data from the front item and deallocate it */
-void *dequeue(queue* q) {
+void *dequeue(queue_t * q) {
 
     pthread_mutex_lock(&(q->lock));
 
@@ -76,7 +81,7 @@ void *dequeue(queue* q) {
 }
 
 
-int send_queue(queue *q, int fd, sendfunc f) {
+int send_queue(queue_t *q, int fd, sendfunc f) {
     int ret = 0;
     queue_item *item = q->front;
     while (item) {

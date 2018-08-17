@@ -24,18 +24,18 @@ struct action {
 };
 
 
-struct command {
+typedef struct {
     uint8_t opcode;
     uint8_t qos;
     union {
         struct build b;
         struct action a;
     } cmd;
-};
+} command_t;
 
 
-struct command parse_command(char *);
-struct command parse_protocol_command(struct protocol_packet);
+command_t parse_command(char *);
+command_t parse_protocol_command(protocol_packet_t);
 
 
 #endif

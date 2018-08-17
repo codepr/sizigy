@@ -26,19 +26,21 @@ struct socks {
 };
 
 
-struct reply {
+typedef struct {
     uint8_t type;
     uint8_t qos;
     int fd;
     char *data;
     char *channel;
-};
+} reply_t;
 
 
 struct global {
+    uint8_t run;
+    uint8_t loglevel;
     counter_t next_id;
-    map *channels;
-    map *ack_waiting;
+    map_t *channels;
+    map_t *ack_waiting;
     pthread_mutex_t lock;
 };
 

@@ -15,20 +15,20 @@ typedef struct queue_item {
 } queue_item;
 
 
-typedef struct queue {
+typedef struct queue_t {
     unsigned long len;
     queue_item *front;
     queue_item *rear;
     pthread_mutex_t lock;
     pthread_cond_t cond;
-} queue;
+} queue_t;
 
 
-queue *create_queue(void);
-void release_queue(queue *);
-void enqueue(queue *, void *);
-void *dequeue(queue *);
-int send_queue(queue *, int, sendfunc);
+queue_t *create_queue(void);
+void release_queue(queue_t *);
+void enqueue(queue_t *, void *);
+void *dequeue(queue_t *);
+int send_queue(queue_t *, int, sendfunc);
 
 
 #endif
