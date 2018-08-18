@@ -8,6 +8,7 @@ SRC=src/map.c 			\
 	src/parser.c 		\
 	src/server.c		\
 	src/channel.c       \
+	src/ringbuf.c		\
 	src/protocol.c
 
 sizigy: $(SRC)

@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include "map.h"
 #include "util.h"
+#include "ringbuf.h"
 
 #define EPOLL_WORKERS 4
 #define MAX_EVENTS	  64
@@ -50,6 +51,6 @@ extern struct global global;
 
 int start_server();
 int sendall(int , char *, ssize_t *);
-int recvall(int, char *);
+int recvall(int, ringbuf_t *);
 
 #endif

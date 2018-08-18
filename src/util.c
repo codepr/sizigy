@@ -69,7 +69,7 @@ void s_log(uint8_t level, const char *info, ...) {
         strftime(prefix, 50, "%Y-%m-%d %H:%M:%S", localtime(&now));
         sprintf(time_buff, " ");
         char content[strlen(prefix) + strlen(info) + strlen(time_buff)];
-        memset(content, 0x00, strlen(content));
+        memset(content, 0x00, sizeof(content));
         strcat(content, prefix);
         strcat(content, time_buff);
         strcat(content, info);

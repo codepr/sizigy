@@ -28,14 +28,13 @@ typedef struct {
     uint8_t opcode;
     uint8_t qos;
     union {
-        struct build b;
-        struct action a;
+        struct build *b;
+        struct action *a;
     } cmd;
 } command_t;
 
 
-command_t parse_command(char *);
-command_t parse_protocol_command(protocol_packet_t);
+command_t *parse_command(protocol_packet_t *);
 
 
 #endif

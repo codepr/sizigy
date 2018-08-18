@@ -6,11 +6,11 @@
 #include "queue.h"
 
 
-struct channel {
+typedef struct {
     char *name;
     list_t *subscribers;
     queue_t *messages;
-};
+} channel_t;
 
 
 struct subscriber {
@@ -20,10 +20,10 @@ struct subscriber {
 };
 
 
-struct channel *create_channel(char *);
-void add_subscriber(struct channel *, struct subscriber *);
-void del_subscriber(struct channel *, struct subscriber *);
-int publish_message(struct channel *, uint8_t, void *);
-void destroy_channel(struct channel *);
+channel_t *create_channel(char *);
+void add_subscriber(channel_t *, struct subscriber *);
+void del_subscriber(channel_t *, struct subscriber *);
+int publish_message(channel_t *, uint8_t, void *);
+void destroy_channel(channel_t *);
 
 #endif

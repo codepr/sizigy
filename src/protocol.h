@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include "ringbuf.h"
 
 /* Packet type definition */
 #define CLIENT_PACKET 0x80
@@ -52,9 +53,9 @@ typedef struct {
     uint8_t type;
     uint8_t opcode;
     union {
-        struct sub_packet sub_packet;
-        struct sys_pubpacket sys_pubpacket;
-        struct cli_pubpacket cli_pubpacket;
+        struct sub_packet *sub_packet;
+        struct sys_pubpacket *sys_pubpacket;
+        struct cli_pubpacket *cli_pubpacket;
         char *data;
     } payload;
 } protocol_packet_t;
@@ -66,13 +67,13 @@ typedef struct {
 } packed_t;
 
 
-packed_t pack(protocol_packet_t);
-protocol_packet_t unpack(char *);
-protocol_packet_t create_data_packet(uint8_t, char *);
-protocol_packet_t create_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
-protocol_packet_t *create_sys_pubpacket_p(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
-packed_t pack_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
-packed_t pack_data_packet(uint8_t, char *);
+packed_t *pack(protocol_packet_t*);
+protocol_packet_t *unpack(char *);
+int8_t unpack2(ringbuf_t *, protocol_packet_t *);
+protocol_packet_t *create_data_packet(uint8_t, char *);
+protocol_packet_t *create_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
+packed_t *pack_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
+packed_t *pack_data_packet(uint8_t, char *);
 
 
 #endif

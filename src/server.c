@@ -176,13 +176,14 @@ static int accept_connection(int epollfd, int serversock) {
 static int send_data(void *arg1, int fd) {
     queue_item *item = (queue_item *) arg1;
     protocol_packet_t *pp = (protocol_packet_t *) item->data;
-    packed_t p = pack(*pp);
-    if (sendall(fd, p.data, &p.size) < 0) {
+    packed_t *p = pack(pp);
+    if (sendall(fd, p->data, &p->size) < 0) {
         perror("send(2): error sending\n");
         return -1;
     }
-    free(pp->payload.sys_pubpacket.data);
-    free(p.data);
+    free(pp->payload.sys_pubpacket->data);
+    free(p->data);
+    free(p);
     return 0;
 }
 
@@ -199,23 +200,37 @@ static int close_socket(void *arg1, void *arg2) {
 
 static int handle_request(int epollfd, int clientfd) {
 
-    char *readbuff = malloc(BUFSIZE);
+    /* Buffer to initialize the ring buffer, used to handle input from client */
+    uint8_t buffer[BUFSIZE * 3];
+
+    /* Ringbuffer pointer struct, helpful to handle different and unknown
+       size of chunks of data which can result in partially formed packets or
+       overlapping as well */
+    ringbuf_t *rbuf = ringbuf_init(buffer, BUFSIZE * 3);
+
+    /* Read all data to form a packet flag */
+    int8_t read_all = -1;
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
     ssize_t n;
-
-    memset(readbuff, 0x00, BUFSIZE);
+    protocol_packet_t *p = malloc(sizeof(protocol_packet_t));
 
     pthread_mutex_lock(&(global.lock));
 
-    if ((n = recvall(clientfd, readbuff)) < 0) {
-        return -1;
+    /* We must read all incoming bytes till an entire packet is received. This
+       is achieved by using a standardized protocol, which send the size of the
+       complete packet as the first 4 bytes. By knowing it we know if the packet is
+       ready to be deserialized and used.*/
+    while (read_all == -1) {
+        if ((n = recvall(clientfd, rbuf)) < 0) {
+            return -1;
+        }
+        if (n == 0) {
+            return 0;
+        }
+        /* Unpack incoming bytes */
+        read_all = unpack2(rbuf, p);
     }
-    if (n == 0) {
-        return 0;
-    }
-
-    readbuff[n] = '\0';
 
     if (getpeername(clientfd, (struct sockaddr *) &addr, &addrlen) < 0) {
         return -1;
@@ -226,12 +241,9 @@ static int handle_request(int epollfd, int clientfd) {
         return -1;
     }
 
-    /* Unpack incoming bytes */
-    protocol_packet_t p = unpack(readbuff);
-
     /* Parse command according to the communication protocol */
-    command_t comm = parse_protocol_command(p);
-    /* free(p.data);   //FIXME release memory */
+    command_t *comm = parse_command(p);
+
     reply_t *reply = malloc(sizeof(reply_t));
 
     if (!reply) {
@@ -241,34 +253,34 @@ static int handle_request(int epollfd, int clientfd) {
 
     reply->fd = clientfd;
     reply->data = OK;       // placeholder reply
-    reply->qos = comm.qos;
+    reply->qos = comm->qos;
     void *raw_chan = NULL;  // placeholder for map_get
 
-    switch(comm.opcode) {
+    switch(comm->opcode) {
         case CREATE_CHANNEL:
-            DEBUG("*** CREATE %s\n", comm.cmd.b.channel_name);
-            struct channel *channel = create_channel(comm.cmd.b.channel_name);
-            map_put(global.channels, comm.cmd.b.channel_name, channel);
+            DEBUG("*** CREATE %s\n", comm->cmd.b->channel_name);
+            channel_t *channel = create_channel(comm->cmd.b->channel_name);
+            map_put(global.channels, comm->cmd.b->channel_name, channel);
             reply->type = ACK_REPLY;
             break;
         case DELETE_CHANNEL:
-            DEBUG("*** DELETE %s\n", comm.cmd.b.channel_name);
-            raw_chan = map_get(global.channels, comm.cmd.b.channel_name);
+            DEBUG("*** DELETE %s\n", comm->cmd.b->channel_name);
+            raw_chan = map_get(global.channels, comm->cmd.b->channel_name);
             if (raw_chan) {
-                struct channel *chan = (struct channel *) raw_chan;
+                channel_t *chan = (channel_t *) raw_chan;
                 destroy_channel(chan);
             }
-            map_del(global.channels, comm.cmd.b.channel_name);
+            map_del(global.channels, comm->cmd.b->channel_name);
             reply->type = ACK_REPLY;
             break;
         case SUBSCRIBE_CHANNEL:
-            DEBUG("*** SUBSCRIBE %s\n", comm.cmd.b.channel_name);
-            void *raw = map_get(global.channels, comm.cmd.b.channel_name);
+            DEBUG("*** SUBSCRIBE %s\n", comm->cmd.b->channel_name);
+            void *raw = map_get(global.channels, comm->cmd.b->channel_name);
             if (!raw) {
-                struct channel *channel = create_channel(comm.cmd.b.channel_name);
-                map_put(global.channels, comm.cmd.b.channel_name, channel);
+                channel_t *channel = create_channel(comm->cmd.b->channel_name);
+                map_put(global.channels, strdup(comm->cmd.b->channel_name), channel);
             }
-            struct channel *chan = (struct channel *) map_get(global.channels, comm.cmd.b.channel_name);
+            channel_t *chan = (channel_t *) map_get(global.channels, comm->cmd.b->channel_name);
             struct subscriber *sub = malloc(sizeof(struct subscriber));
             if (!sub) {
                 perror("malloc(3) failed");
@@ -276,16 +288,16 @@ static int handle_request(int epollfd, int clientfd) {
             }
             sub->fd = clientfd;
             sub->name = "sub";
-            sub->qos = comm.qos;
+            sub->qos = comm->qos;
             add_subscriber(chan, sub);
             send_queue(chan->messages, clientfd, send_data);
             reply->type = ACK_REPLY;
             break;
         case UNSUBSCRIBE_CHANNEL:
-            DEBUG("*** UNSUBSCRIBE %s\n", comm.cmd.b.channel_name);
-            raw_chan = map_get(global.channels, comm.cmd.b.channel_name);
+            DEBUG("*** UNSUBSCRIBE %s\n", comm->cmd.b->channel_name);
+            raw_chan = map_get(global.channels, comm->cmd.b->channel_name);
             if (raw_chan) {
-                struct channel *chan = (struct channel *) raw_chan;
+                channel_t *chan = (channel_t *) raw_chan;
                 // XXX basic placeholder subscriber
                 struct subscriber sub = { clientfd, AT_MOST_ONCE, "sub" };
                 del_subscriber(chan, &sub);
@@ -293,8 +305,8 @@ static int handle_request(int epollfd, int clientfd) {
             reply->type = ACK_REPLY;
             break;
         case PUBLISH_MESSAGE:
-            reply->data = comm.cmd.a.message;
-            reply->channel = comm.cmd.a.channel_name;
+            reply->data = strdup(comm->cmd.a->message);
+            reply->channel = strdup(comm->cmd.a->channel_name);
             reply->type = DATA_REPLY;
             break;
         case PING:
@@ -306,7 +318,7 @@ static int handle_request(int epollfd, int clientfd) {
             reply->type = NO_REPLY;
             uint64_t id = 0;
             /* Extract uint64_t ID from the payload */
-            char *id_str = comm.cmd.b.channel_name;
+            char *id_str = comm->cmd.b->channel_name;
             while (*id_str != '\0') {
                 id = (id * 10) + (*id_str - '0');
                 id_str++;
@@ -340,25 +352,32 @@ static int handle_request(int epollfd, int clientfd) {
             break;
     }
 
-    set_epollout(epollfd, clientfd, reply);
+    if (reply->type != NO_REPLY)
+        set_epollout(epollfd, clientfd, reply);
+    else
+        set_epollin(epollfd, clientfd);
 
     pthread_mutex_unlock(&global.lock);
 
-    if (p.opcode == PUBLISH_MESSAGE) {
-        if (p.type == SYSTEM_PACKET)
-            free(p.payload.sys_pubpacket.data);
+    if (p->opcode == PUBLISH_MESSAGE) {
+        if (p->type == SYSTEM_PACKET)
+            free(p->payload.sys_pubpacket->data);
         else
-            free(p.payload.cli_pubpacket.data);
-    } else if (p.opcode == SUBSCRIBE_CHANNEL
-            || p.opcode == UNSUBSCRIBE_CHANNEL
-            || p.opcode == ACK) {
+            free(p->payload.cli_pubpacket->data);
+        free(comm->cmd.a->channel_name);
+        free(comm->cmd.a->message);
+        free(comm->cmd.a);
+    } else if (p->opcode == SUBSCRIBE_CHANNEL
+            || p->opcode == UNSUBSCRIBE_CHANNEL
+            || p->opcode == ACK) {
         /* free(p.payload.sub_packet.channel_name); */
-        free(comm.cmd.b.channel_name);
+        free(comm->cmd.b->channel_name);
+        free(comm->cmd.b);
     } else {
-        free(p.payload.data);
+        free(p->payload.data);
     }
-
-    free(readbuff);
+    free(comm);
+    free(p);
 
     return 0;
 }
@@ -393,14 +412,14 @@ static void *worker(void *args) {
             } else if (events[i].data.fd == fds->serversock) {
                 if (accept_connection(fds->epollfd, events[i].data.fd) == -1) {
                     fprintf(stderr, "Error accepting new client: %s\n",
-                        strerror(errno));
+                            strerror(errno));
                 }
                 // Rearm descriptor server socket on EPOLLIN
                 set_epollin(fds->epollfd, fds->serversock);
             } else if (events[i].events & EPOLLIN) {
                 if (handle_request(fds->epollfd, events[i].data.fd) == -1) {
                     fprintf(stderr, "Error handling request: %s\n",
-                        strerror(errno));
+                            strerror(errno));
                     /* Clean up all channels if the client was subscribed */
                     map_iterate2(global.channels, close_socket, NULL);
                     close(events[i].data.fd);
@@ -409,54 +428,56 @@ static void *worker(void *args) {
 
                 reply_t *reply = (reply_t *) events[i].data.ptr;
                 ssize_t sent;
-                protocol_packet_t pp = create_data_packet(ACK, OK);
-                packed_t p = pack(pp);
+                protocol_packet_t *pp = create_data_packet(ACK, OK);
+                packed_t *p = pack(pp);
 
                 if (reply->type == ACK_REPLY) {
-                    if ((sent = sendall(reply->fd, p.data, &p.size)) < 0) {
+                    if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
                         perror("send(2): can't write on socket descriptor");
-                        return NULL;
+                        goto cleanup;
                     }
                 } else if (reply->type == NACK_REPLY) {
-                    pp.opcode = NACK;
-                    pp.payload.data = reply->data;
-                    free(p.data);
+                    pp->opcode = NACK;
+                    pp->payload.data = reply->data;
+                    free(p->data);
                     p = pack(pp);
-                    if ((sent = sendall(reply->fd, p.data, &p.size)) < 0) {
+                    if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
                         perror("send(2): can't write on socket descriptor");
-                        return NULL;
+                        goto cleanup;
                     }
                 } else if (reply->type == PING_REPLY) {
-                    pp.opcode = PING;
-                    pp.payload.data = reply->data;
-                    free(p.data);
+                    pp->opcode = PING;
+                    pp->payload.data = reply->data;
+                    free(p->data);
                     p = pack(pp);
-                    if ((sent = sendall(reply->fd, p.data, &p.size)) < 0) {
+                    if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
                         perror("send(2): can't write on socket descriptor");
-                        return NULL;
+                        goto cleanup;
                     }
                 } else if (reply->type == NO_REPLY) {
                     // Ignore
                 } else {
-                    // reply_t to original sender
-                    if ((sent = sendall(reply->fd, p.data, &p.size)) < 0) {
-                            perror("send(2): can't write on socket descriptor");
-                            return NULL;
+                    // reply to original sender
+                    if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
+                        perror("send(2): can't write on socket descriptor");
+                        goto cleanup;
                     }
                     void *raw_subs = map_get(global.channels, reply->channel);
                     if (!raw_subs) {
-                        struct channel *channel = create_channel(strdup(reply->channel));
+                        channel_t *channel = create_channel(strdup(reply->channel));
                         map_put(global.channels, strdup(reply->channel), channel);
                     }
-                    struct channel *chan = (struct channel *) map_get(global.channels, reply->channel);
+                    channel_t *chan = (channel_t *) map_get(global.channels, reply->channel);
                     publish_message(chan, reply->qos, strdup(reply->data));
                 }
-                free(p.data);
+cleanup:
+                free(p->data);
+                free(p);
                 // Rearm descriptor on EPOLLIN
                 set_epollin(fds->epollfd, reply->fd);
                 // Clean up reply
-                /* if (reply->type == DATA_REPLY) */
-                    /* free_reply(reply); */
+                if (reply->type == DATA_REPLY)
+                    free_reply(reply);
                 free(reply);
             }
         }
@@ -476,12 +497,12 @@ static int destroy_queue_data(void *t1, void *t2) {
     if (kv) {
         // free value field
         if (kv->val) {
-            struct channel *c = (struct channel *) kv->val;
+            channel_t *c = (channel_t *) kv->val;
             queue_item *item = c->messages->front;
             while (item) {
                 protocol_packet_t *p = (protocol_packet_t *) item->data;
-                if (p->payload.sys_pubpacket.data)
-                    free(p->payload.sys_pubpacket.data);
+                if (p->payload.sys_pubpacket->data)
+                    free(p->payload.sys_pubpacket->data);
                 free(p);
                 item = item->next;
             }
@@ -497,7 +518,7 @@ static int destroy_channels(void *t1, void *t2) {
     if (kv) {
         // free value field
         if (kv->val) {
-            struct channel *c = (struct channel *) kv->val;
+            channel_t *c = (channel_t *) kv->val;
             destroy_channel(c);
         }
     } else return MAP_ERR;
@@ -557,10 +578,9 @@ int start_server(void) {
     /*     pthread_join(&workers[i], NULL); */
 
     /* Free all resources allocated */
-    /* map_iterate2(global.channels, destroy_lists, NULL); */
-    map_iterate2(global.channels, destroy_queue_data, NULL);
+    /* map_iterate2(global.channels, destroy_queue_data, NULL); */
     map_iterate2(global.channels, destroy_channels, NULL);
-    map_release(global.channels);
+    /* map_release(global.channels); */
     return 0;
 }
 
@@ -587,20 +607,12 @@ int sendall(int sfd, char *buf, ssize_t *len) {
 }
 
 
-int recvall(int sfd, char *buf) {
+int recvall(int sfd, ringbuf_t *ringbuf) {
     int n = 0;
     int total = 0;
-    int cur_size = BUFSIZE;
-    /* int threshold = BUFSIZE; */
+    char buf[BUFSIZE];
     for (;;) {
-        if (total >= cur_size) {
-            cur_size += BUFSIZE;
-            /* threshold = threshold * 2; */
-            char *tmp = realloc(buf, cur_size);
-            buf = tmp;
-        }
-        DEBUG("THRESHOLD %d\n", cur_size);
-        if ((n = recv(sfd, buf + total, BUFSIZE, 0)) < 0) {
+        if ((n = recv(sfd, buf, BUFSIZE - 1, 0)) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
             } else {
@@ -611,10 +623,10 @@ int recvall(int sfd, char *buf) {
         if (n == 0) {
             return 0;
         }
+
+        ringbuf_bulk_put(ringbuf, buf, n);
+
         total += n;
-        DEBUG("N %d\n", n);
-        DEBUG("PART TOTAL %d\n", total);
     }
-    DEBUG("TOTAL %d\n", total);
     return total;
 }
