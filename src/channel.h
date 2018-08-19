@@ -16,6 +16,7 @@ typedef struct {
 struct subscriber {
     int fd;
     uint8_t qos;
+    int64_t offset;
     char *name;
 };
 

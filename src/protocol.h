@@ -29,7 +29,7 @@
 
 struct sub_packet {
     uint8_t qos;
-    uint64_t offset;
+    int64_t offset;
     uint8_t *channel_name;
 };
 

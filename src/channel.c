@@ -48,14 +48,21 @@ void del_subscriber(channel_t *chan, struct subscriber *subscriber) {
 
 int publish_message(channel_t *chan, uint8_t qos, void *message) {
     int ret = 0;
+    uint8_t qos_mod = 0;
     char *channel = append_string(chan->name, " ");
     uint8_t duplicate = 0;
     protocol_packet_t *pp = create_sys_pubpacket(PUBLISH_MESSAGE, qos, duplicate, channel, message, 1);
     uint64_t id = pp->payload.sys_pubpacket->id;
     packed_t *p = pack(pp);
     /* Prepare packet for AT_LEAST_ONCE subscribers */
-    pp->payload.sys_pubpacket->qos = AT_LEAST_ONCE;
+    if (pp->payload.sys_pubpacket->qos == AT_MOST_ONCE) {
+        pp->payload.sys_pubpacket->qos = AT_LEAST_ONCE;
+        qos_mod = 1;
+    }
     packed_t *p_ack = pack(pp);
+    /* Restore original qos */
+    if (qos_mod)
+        pp->payload.sys_pubpacket->qos = AT_MOST_ONCE;
 
     DEBUG("*** PUBLISH (id=%ld qos=%d redelivered=%d message=%s) on channel %s (%ld bytes)\n",
             id, qos, duplicate, (char *) message, chan->name, p->size);

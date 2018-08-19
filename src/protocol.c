@@ -9,7 +9,7 @@
 
 static packed_t *pack_sub_packet(struct sub_packet *packet) {
     ssize_t dlen = strlen((char *) packet->channel_name);
-    uint32_t tlen = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint64_t) + dlen;
+    uint32_t tlen = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(int64_t) + dlen;
     uint8_t *raw = malloc(sizeof(uint8_t) * tlen);
     if (!raw) {
         perror("malloc(3) failed");
@@ -18,11 +18,11 @@ static packed_t *pack_sub_packet(struct sub_packet *packet) {
     uint8_t *meta = raw;
     uint8_t *qos = raw + sizeof(uint32_t);
     uint8_t *offset = raw + sizeof(uint8_t);
-    uint8_t *channel_name = offset + sizeof(uint64_t);
+    uint8_t *channel_name = offset + sizeof(int64_t);
 
     *((uint32_t *) meta) = dlen;
     *((uint8_t *) qos) = packet->qos;
-    *((uint64_t *) offset) = packet->offset;
+    *((int64_t *) offset) = packet->offset;
     memcpy(channel_name, packet->channel_name, dlen);
     packed_t *packed = malloc(sizeof(packed_t));
     if (!packed) {
@@ -41,7 +41,7 @@ static struct sub_packet *unpack_sub_packet(uint8_t *bytes) {
     uint8_t *qos = meta + sizeof(uint32_t);
     uint8_t *offset = qos + sizeof(uint8_t);
     // Move index after data field length and type (for now) to obtain operation code position
-    uint8_t *data = offset + sizeof(uint64_t);
+    uint8_t *data = offset + sizeof(int64_t);
     // build up the protocol packet
     struct sub_packet *packet = malloc(sizeof(struct sub_packet));
     if (!packet) {
@@ -51,7 +51,7 @@ static struct sub_packet *unpack_sub_packet(uint8_t *bytes) {
     // unpack all bytes into the structure
     ssize_t data_len = *((uint32_t *) meta);
     packet->qos = *((uint8_t *) qos);
-    packet->offset = *((uint64_t *) offset);
+    packet->offset = *((int64_t *) offset);
     packet->channel_name = malloc((data_len + 1) * sizeof(uint8_t));
 
     if (!packet->channel_name) {
@@ -219,7 +219,8 @@ packed_t *pack(protocol_packet_t *packet) {
             // Data byte length
             dlen = p->size;
             // structure whole length to be allocated
-            tlen = (2 * sizeof(uint8_t)) + sizeof(uint64_t) + dlen;
+            /* tlen = (2 * sizeof(uint8_t)) + sizeof(int64_t) + dlen; */
+            tlen = (2 * sizeof(uint8_t)) + dlen;
             // bytes to be allocated + size of the data field
             raw = malloc(tlen);
 
@@ -246,7 +247,6 @@ packed_t *pack(protocol_packet_t *packet) {
             // Data byte length
             dlen = p->size;
             // structure whole length to be allocated
-            /* tlen = (4 * sizeof(uint8_t)) + sizeof(uint64_t) + dlen; */
             tlen = (2 * sizeof(uint8_t)) + dlen;
             // bytes to be allocated + size of the data field
             raw = malloc(tlen);

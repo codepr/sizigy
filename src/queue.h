@@ -6,7 +6,7 @@
 #include <pthread.h>
 
 
-typedef int (*sendfunc)(void *, int);
+typedef int (*sendfunc)(void *, void *);
 
 
 typedef struct queue_item {
@@ -28,7 +28,7 @@ queue_t *create_queue(void);
 void release_queue(queue_t *);
 void enqueue(queue_t *, void *);
 void *dequeue(queue_t *);
-int send_queue(queue_t *, int, sendfunc);
+int send_queue(queue_t *, void *, sendfunc);
 
 
 #endif

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "queue.h"
+#include "channel.h"
 
 
 queue_t *create_queue(void) {
@@ -81,12 +82,17 @@ void *dequeue(queue_t * q) {
 }
 
 
-int send_queue(queue_t *q, int fd, sendfunc f) {
+int send_queue(queue_t *q, void *ptr, sendfunc f) {
+    /* Dirty hack that works as a MVP solution */
+    struct subscriber *sub = (struct subscriber *) ptr;
     int ret = 0;
+    int64_t n = q->len;
     queue_item *item = q->front;
     while (item) {
-        ret = f(item, fd);
+        if (n <= sub->offset || sub->offset > q->len || sub->offset == -1)
+            ret = f(item, ptr);
         item = item->next;
+        n--;
     }
     return ret;
 }

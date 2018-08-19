@@ -173,15 +173,17 @@ static int accept_connection(int epollfd, int serversock) {
 }
 
 
-static int send_data(void *arg1, int fd) {
+static int send_data(void *arg1, void *ptr) {
+    struct subscriber *sub = (struct subscriber *) ptr;
     queue_item *item = (queue_item *) arg1;
     protocol_packet_t *pp = (protocol_packet_t *) item->data;
+    if (sub->qos > 0)
+        pp->payload.sys_pubpacket->qos = 1;
     packed_t *p = pack(pp);
-    if (sendall(fd, p->data, &p->size) < 0) {
+    if (sendall(sub->fd, p->data, &p->size) < 0) {
         perror("send(2): error sending\n");
         return -1;
     }
-    free(pp->payload.sys_pubpacket->data);
     free(p->data);
     free(p);
     return 0;
@@ -289,8 +291,9 @@ static int handle_request(int epollfd, int clientfd) {
             sub->fd = clientfd;
             sub->name = "sub";
             sub->qos = comm->qos;
+            sub->offset = comm->cmd.b->offset;
             add_subscriber(chan, sub);
-            send_queue(chan->messages, clientfd, send_data);
+            send_queue(chan->messages, sub, send_data);
             reply->type = ACK_REPLY;
             break;
         case UNSUBSCRIBE_CHANNEL:
@@ -299,7 +302,7 @@ static int handle_request(int epollfd, int clientfd) {
             if (raw_chan) {
                 channel_t *chan = (channel_t *) raw_chan;
                 // XXX basic placeholder subscriber
-                struct subscriber sub = { clientfd, AT_MOST_ONCE, "sub" };
+                struct subscriber sub = { clientfd, AT_MOST_ONCE, 0, "sub" };
                 del_subscriber(chan, &sub);
             }
             reply->type = ACK_REPLY;

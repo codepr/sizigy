@@ -12,7 +12,7 @@
 
 
 struct build {
-    uint64_t offset;
+    int64_t offset;
     char *channel_name;
 };
 
