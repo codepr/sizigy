@@ -31,7 +31,7 @@ command_t *parse_command(protocol_packet_t *packet) {
             else {
                 struct build *b = malloc(sizeof(struct build));
                 b->offset = 0;
-                b->channel_name = strdup(packet->payload.data);
+                b->channel_name = strdup((char *) packet->payload.data);
                 comm->cmd.b = b;
             }
             break;
@@ -42,21 +42,21 @@ command_t *parse_command(protocol_packet_t *packet) {
                 comm->qos = packet->payload.sub_packet->qos;
                 struct build *b = malloc(sizeof(struct build));
                 b->offset = packet->payload.sub_packet->offset;
-                b->channel_name = strdup(packet->payload.sub_packet->channel_name);
+                b->channel_name = strdup((char *) packet->payload.sub_packet->channel_name);
                 comm->cmd.b = b;
             }
             break;
         case PUBLISH_MESSAGE:
             if (packet->type == SYSTEM_PACKET) {
                 comm->qos = packet->payload.sys_pubpacket->qos;
-                size_t pub_len = strlen(packet->payload.sys_pubpacket->data);
+                size_t pub_len = strlen((char *) packet->payload.sys_pubpacket->data);
                 memcpy(tmp, packet->payload.sys_pubpacket->data, pub_len);
                 tmp[pub_len] = '\0';
             }
             else {
                 // XXX should check strictly for the only two options available
                 comm->qos = packet->payload.cli_pubpacket->qos;
-                size_t pub_len = strlen(packet->payload.cli_pubpacket->data);
+                size_t pub_len = strlen((char *) packet->payload.cli_pubpacket->data);
                 memcpy(tmp, packet->payload.cli_pubpacket->data, pub_len);
                 tmp[pub_len] = '\0';
             }

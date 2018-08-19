@@ -229,7 +229,7 @@ static int handle_request(int epollfd, int clientfd) {
             return 0;
         }
         /* Unpack incoming bytes */
-        read_all = unpack2(rbuf, p);
+        read_all = unpack(rbuf, p);
     }
 
     if (getpeername(clientfd, (struct sockaddr *) &addr, &addrlen) < 0) {
@@ -428,7 +428,7 @@ static void *worker(void *args) {
 
                 reply_t *reply = (reply_t *) events[i].data.ptr;
                 ssize_t sent;
-                protocol_packet_t *pp = create_data_packet(ACK, OK);
+                protocol_packet_t *pp = create_data_packet(ACK, (uint8_t *) OK);
                 packed_t *p = pack(pp);
 
                 if (reply->type == ACK_REPLY) {
@@ -438,7 +438,7 @@ static void *worker(void *args) {
                     }
                 } else if (reply->type == NACK_REPLY) {
                     pp->opcode = NACK;
-                    pp->payload.data = reply->data;
+                    pp->payload.data = (uint8_t *) reply->data;
                     free(p->data);
                     p = pack(pp);
                     if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
@@ -447,7 +447,7 @@ static void *worker(void *args) {
                     }
                 } else if (reply->type == PING_REPLY) {
                     pp->opcode = PING;
-                    pp->payload.data = reply->data;
+                    pp->payload.data = (uint8_t *) reply->data;
                     free(p->data);
                     p = pack(pp);
                     if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
@@ -492,25 +492,25 @@ cleanup:
 }
 
 
-static int destroy_queue_data(void *t1, void *t2) {
-    map_entry *kv = (map_entry *) t2;
-    if (kv) {
-        // free value field
-        if (kv->val) {
-            channel_t *c = (channel_t *) kv->val;
-            queue_item *item = c->messages->front;
-            while (item) {
-                protocol_packet_t *p = (protocol_packet_t *) item->data;
-                if (p->payload.sys_pubpacket->data)
-                    free(p->payload.sys_pubpacket->data);
-                free(p);
-                item = item->next;
-            }
-            /* release_queue(c->messages); */
-        }
-    } else return MAP_ERR;
-    return MAP_OK;
-}
+/* static int destroy_queue_data(void *t1, void *t2) { */
+/*     map_entry *kv = (map_entry *) t2; */
+/*     if (kv) { */
+/*         // free value field */
+/*         if (kv->val) { */
+/*             channel_t *c = (channel_t *) kv->val; */
+/*             queue_item *item = c->messages->front; */
+/*             while (item) { */
+/*                 protocol_packet_t *p = (protocol_packet_t *) item->data; */
+/*                 if (p->payload.sys_pubpacket->data) */
+/*                     free(p->payload.sys_pubpacket->data); */
+/*                 free(p); */
+/*                 item = item->next; */
+/*             } */
+/*             #<{(| release_queue(c->messages); |)}># */
+/*         } */
+/*     } else return MAP_ERR; */
+/*     return MAP_OK; */
+/* } */
 
 
 static int destroy_channels(void *t1, void *t2) {
@@ -538,7 +538,8 @@ int start_server(void) {
     global.run = eventfd(0, EFD_NONBLOCK);
     global.channels = map_create();
     global.ack_waiting = map_create();
-    init_counter(&global.next_id);  // counter to get message id, should be enclosed inside locks
+    global.next_id = init_counter();  // counter to get message id, should be enclosed inside locks
+    /* init_counter(global.next_id);  // counter to get message id, should be enclosed inside locks */
     pthread_mutex_init(&(global.lock), NULL);
     int epollfd;
 
@@ -574,6 +575,8 @@ int start_server(void) {
     /* Use main thread as a worker too */
     worker(&fds);
 
+    free(global.next_id);
+
     /* for (int i = 0; i < EPOLL_WORKERS; ++i) */
     /*     pthread_join(&workers[i], NULL); */
 
@@ -585,7 +588,7 @@ int start_server(void) {
 }
 
 
-int sendall(int sfd, char *buf, ssize_t *len) {
+int sendall(int sfd, uint8_t *buf, ssize_t *len) {
     int total = 0;
     ssize_t bytesleft = *len;
     int n;
@@ -610,7 +613,7 @@ int sendall(int sfd, char *buf, ssize_t *len) {
 int recvall(int sfd, ringbuf_t *ringbuf) {
     int n = 0;
     int total = 0;
-    char buf[BUFSIZE];
+    uint8_t buf[BUFSIZE];
     for (;;) {
         if ((n = recv(sfd, buf, BUFSIZE - 1, 0)) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {

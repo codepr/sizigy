@@ -39,7 +39,7 @@ typedef struct {
 struct global {
     uint8_t run;
     uint8_t loglevel;
-    counter_t next_id;
+    counter_t *next_id;
     map_t *channels;
     map_t *ack_waiting;
     pthread_mutex_t lock;
@@ -50,7 +50,7 @@ extern struct global global;
 
 
 int start_server();
-int sendall(int , char *, ssize_t *);
+int sendall(int , uint8_t *, ssize_t *);
 int recvall(int, ringbuf_t *);
 
 #endif

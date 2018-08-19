@@ -30,7 +30,7 @@
 struct sub_packet {
     uint8_t qos;
     uint64_t offset;
-    char *channel_name;
+    uint8_t *channel_name;
 };
 
 
@@ -38,14 +38,14 @@ struct sys_pubpacket {
     uint8_t qos;
     uint8_t redelivered;
     uint64_t id;
-    char *data;
+    uint8_t *data;
 };
 
 
 struct cli_pubpacket {
     uint8_t qos;
     uint8_t redelivered;
-    char *data;
+    uint8_t *data;
 };
 
 
@@ -56,24 +56,23 @@ typedef struct {
         struct sub_packet *sub_packet;
         struct sys_pubpacket *sys_pubpacket;
         struct cli_pubpacket *cli_pubpacket;
-        char *data;
+        uint8_t *data;
     } payload;
 } protocol_packet_t;
 
 
 typedef struct {
     ssize_t size;
-    char *data;
+    uint8_t *data;
 } packed_t;
 
 
 packed_t *pack(protocol_packet_t*);
-protocol_packet_t *unpack(char *);
-int8_t unpack2(ringbuf_t *, protocol_packet_t *);
-protocol_packet_t *create_data_packet(uint8_t, char *);
+int8_t unpack(ringbuf_t *, protocol_packet_t *);
+protocol_packet_t *create_data_packet(uint8_t, uint8_t *);
 protocol_packet_t *create_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
 packed_t *pack_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
-packed_t *pack_data_packet(uint8_t, char *);
+packed_t *pack_data_packet(uint8_t, uint8_t *);
 
 
 #endif

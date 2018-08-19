@@ -93,7 +93,7 @@ cleanup:
     free(p_ack->data);
     free(p);
     free(p_ack);
-    free(pp);
+    /* free(pp); */
     free(message);
     return ret;
 }

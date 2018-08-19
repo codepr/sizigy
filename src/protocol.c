@@ -8,17 +8,17 @@
 
 
 static packed_t *pack_sub_packet(struct sub_packet *packet) {
-    ssize_t dlen = strlen(packet->channel_name);
+    ssize_t dlen = strlen((char *) packet->channel_name);
     uint32_t tlen = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint64_t) + dlen;
-    char *raw = malloc(sizeof(char) * tlen);
+    uint8_t *raw = malloc(sizeof(uint8_t) * tlen);
     if (!raw) {
         perror("malloc(3) failed");
         exit(EXIT_FAILURE);
     }
-    char *meta = raw;
-    char *qos = raw + sizeof(uint32_t);
-    char *offset = raw + sizeof(uint8_t);
-    char *channel_name = offset + sizeof(uint64_t);
+    uint8_t *meta = raw;
+    uint8_t *qos = raw + sizeof(uint32_t);
+    uint8_t *offset = raw + sizeof(uint8_t);
+    uint8_t *channel_name = offset + sizeof(uint64_t);
 
     *((uint32_t *) meta) = dlen;
     *((uint8_t *) qos) = packet->qos;
@@ -36,12 +36,12 @@ static packed_t *pack_sub_packet(struct sub_packet *packet) {
 }
 
 
-static struct sub_packet *unpack_sub_packet(char *bytes) {
-    char *meta = bytes;
-    char *qos = meta + sizeof(uint32_t);
-    char *offset = qos + sizeof(uint8_t);
+static struct sub_packet *unpack_sub_packet(uint8_t *bytes) {
+    uint8_t *meta = bytes;
+    uint8_t *qos = meta + sizeof(uint32_t);
+    uint8_t *offset = qos + sizeof(uint8_t);
     // Move index after data field length and type (for now) to obtain operation code position
-    char *data = offset + sizeof(uint64_t);
+    uint8_t *data = offset + sizeof(uint64_t);
     // build up the protocol packet
     struct sub_packet *packet = malloc(sizeof(struct sub_packet));
     if (!packet) {
@@ -52,7 +52,7 @@ static struct sub_packet *unpack_sub_packet(char *bytes) {
     ssize_t data_len = *((uint32_t *) meta);
     packet->qos = *((uint8_t *) qos);
     packet->offset = *((uint64_t *) offset);
-    packet->channel_name = malloc((data_len + 1) * sizeof(char));
+    packet->channel_name = malloc((data_len + 1) * sizeof(uint8_t));
 
     if (!packet->channel_name) {
         perror("malloc(3) failed");
@@ -66,20 +66,20 @@ static struct sub_packet *unpack_sub_packet(char *bytes) {
 
 
 static packed_t *pack_syspubpacket(struct sys_pubpacket *packet) {
-    ssize_t dlen = strlen(packet->data);
+    ssize_t dlen = strlen((char *) packet->data);
     uint32_t tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + sizeof(uint64_t) + dlen;
-    char *raw = malloc(sizeof(char) * tlen);
+    uint8_t *raw = malloc(sizeof(char) * tlen);
 
     if (!raw) {
         perror("malloc(3) failed");
         exit(EXIT_FAILURE);
     }
 
-    char *meta = raw;
-    char *qos = raw + sizeof(uint32_t);
-    char *redelivered = qos + sizeof(uint8_t);
-    char *id = redelivered + sizeof(uint8_t);
-    char *data = id + sizeof(uint64_t);
+    uint8_t *meta = raw;
+    uint8_t *qos = raw + sizeof(uint32_t);
+    uint8_t *redelivered = qos + sizeof(uint8_t);
+    uint8_t *id = redelivered + sizeof(uint8_t);
+    uint8_t *data = id + sizeof(uint64_t);
 
     *((uint32_t *) meta) = dlen;
     *((uint8_t *) qos) = packet->qos;
@@ -97,13 +97,13 @@ static packed_t *pack_syspubpacket(struct sys_pubpacket *packet) {
 }
 
 
-static struct sys_pubpacket *unpack_sys_pubpacket(char *bytes) {
-    char *meta = bytes;
-    char *qos = meta + sizeof(uint32_t);
-    char *redelivered = qos + sizeof(uint8_t);
-    char *id = redelivered + sizeof(uint8_t);
+static struct sys_pubpacket *unpack_sys_pubpacket(uint8_t *bytes) {
+    uint8_t *meta = bytes;
+    uint8_t *qos = meta + sizeof(uint32_t);
+    uint8_t *redelivered = qos + sizeof(uint8_t);
+    uint8_t *id = redelivered + sizeof(uint8_t);
     // Move index after data field length and type (for now) to obtain operation code position
-    char *data = id + sizeof(uint64_t);
+    uint8_t *data = id + sizeof(uint64_t);
     // build up the protocol packet
     struct sys_pubpacket *packet = malloc(sizeof(struct sys_pubpacket));
 
@@ -117,7 +117,7 @@ static struct sys_pubpacket *unpack_sys_pubpacket(char *bytes) {
     packet->qos = *((uint8_t *) qos);
     packet->redelivered = *((uint8_t *) redelivered);
     packet->id = *((uint64_t *) id);
-    packet->data = malloc((data_len + 1) * sizeof(char));
+    packet->data = malloc((data_len + 1) * sizeof(uint8_t));
 
     if (!packet->data) {
         perror("malloc(3) failed");
@@ -130,12 +130,12 @@ static struct sys_pubpacket *unpack_sys_pubpacket(char *bytes) {
 }
 
 
-static struct cli_pubpacket *unpack_cli_pubpacket(char *bytes) {
-    char *meta = bytes;
-    char *qos = meta + sizeof(uint32_t);
-    char *redelivered = qos + sizeof(uint8_t);
+static struct cli_pubpacket *unpack_cli_pubpacket(uint8_t *bytes) {
+    uint8_t *meta = bytes;
+    uint8_t *qos = meta + sizeof(uint32_t);
+    uint8_t *redelivered = qos + sizeof(uint8_t);
     // Move index after data field length and type (for now) to obtain operation code position
-    char *data = redelivered + sizeof(uint8_t);
+    uint8_t *data = redelivered + sizeof(uint8_t);
     // build up the protocol packet
     struct cli_pubpacket *packet = malloc(sizeof(struct cli_pubpacket));
     if (!packet) {
@@ -146,7 +146,7 @@ static struct cli_pubpacket *unpack_cli_pubpacket(char *bytes) {
     ssize_t data_len = *((uint32_t *) meta);
     packet->qos = *((uint8_t *) qos);
     packet->redelivered = *((uint8_t *) redelivered);
-    packet->data = malloc((data_len + 1) * sizeof(char));
+    packet->data = malloc((data_len + 1) * sizeof(uint8_t));
 
     if (!packet->data) {
         perror("malloc(3) failed");
@@ -167,11 +167,11 @@ packed_t *pack(protocol_packet_t *packet) {
     }
     ssize_t dlen = 0;
     uint32_t tlen = 0;
-    char *raw = NULL;
-    char *meta = NULL;
-    char *type = NULL;
-    char *opcode = NULL;
-    char *data = NULL;
+    uint8_t *raw = NULL;
+    uint8_t *meta = NULL;
+    uint8_t *type = NULL;
+    uint8_t *opcode = NULL;
+    uint8_t *data = NULL;
     packed_t *p = malloc(sizeof(packed_t));
     if (!p) {
         perror("malloc(3) failed");
@@ -188,7 +188,7 @@ packed_t *pack(protocol_packet_t *packet) {
         case DELETE_CHANNEL:
         case UNSUBSCRIBE_CHANNEL:
             // Data byte length
-            dlen = strlen(packet->payload.data);
+            dlen = strlen((char *) packet->payload.data);
             // structure whole length to be allocated
             tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + dlen;
             // bytes to be allocated + size of the data field
@@ -221,7 +221,7 @@ packed_t *pack(protocol_packet_t *packet) {
             // structure whole length to be allocated
             tlen = (2 * sizeof(uint8_t)) + sizeof(uint64_t) + dlen;
             // bytes to be allocated + size of the data field
-            raw = malloc(sizeof(char) * tlen);
+            raw = malloc(tlen);
 
             if (!raw) {
                 perror("malloc(3) failed");
@@ -249,7 +249,7 @@ packed_t *pack(protocol_packet_t *packet) {
             /* tlen = (4 * sizeof(uint8_t)) + sizeof(uint64_t) + dlen; */
             tlen = (2 * sizeof(uint8_t)) + dlen;
             // bytes to be allocated + size of the data field
-            raw = malloc(sizeof(char) * tlen);
+            raw = malloc(tlen);
 
             if (!raw) {
                 perror("malloc(3) failed");
@@ -275,63 +275,7 @@ packed_t *pack(protocol_packet_t *packet) {
 }
 
 
-protocol_packet_t *unpack(char *bytes) {
-    protocol_packet_t *packet = malloc(sizeof(protocol_packet_t));
-    if (!packet) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-    char *opcode = bytes;
-    char *meta = NULL;
-    char *type = NULL;
-    char *data = NULL;
-    packet->opcode = *((uint8_t *) opcode);
-
-    switch (packet->opcode) {
-        case CREATE_CHANNEL:
-        case DELETE_CHANNEL:
-        case UNSUBSCRIBE_CHANNEL:
-        case PING:
-        case QUIT:
-        case ACK:
-        case NACK:
-        case DATA:
-            meta = bytes + sizeof(uint8_t);
-            type = meta + sizeof(uint32_t);
-            data = type + sizeof(uint8_t);
-            ssize_t data_len = *((uint32_t *) meta);
-            packet->type = *((uint8_t *) type);
-            packet->payload.data = malloc((data_len + 1) * sizeof(char));
-
-            if (!packet->payload.data) {
-                perror("malloc(3) failed");
-                exit(EXIT_FAILURE);
-            }
-
-            memcpy(packet->payload.data, data, data_len);
-            packet->payload.data[data_len] = '\0';
-            break;
-        case SUBSCRIBE_CHANNEL:
-            type = bytes + sizeof(uint8_t);
-            data = type + sizeof(uint8_t);
-            packet->type = *((uint8_t *) type);
-            packet->payload.sub_packet = unpack_sub_packet(data);
-            break;
-        case PUBLISH_MESSAGE:
-            type = bytes + sizeof(uint8_t);
-            data = type + sizeof(uint8_t);
-            packet->type = *((uint8_t *) type);
-            if (packet->type == SYSTEM_PACKET)
-                packet->payload.sys_pubpacket = unpack_sys_pubpacket(data);
-            else
-                packet->payload.cli_pubpacket = unpack_cli_pubpacket(data);
-            break;
-    }
-    return packet;
-}
-
-
-int8_t unpack2(ringbuf_t *rbuf, protocol_packet_t *packet) {
+int8_t unpack(ringbuf_t *rbuf, protocol_packet_t *packet) {
 
     /* Check the size of the ring buffer, we need at least the first 4 bytes in
        order to get the total length of the packet */
@@ -379,7 +323,7 @@ int8_t unpack2(ringbuf_t *rbuf, protocol_packet_t *packet) {
             data = type + sizeof(uint8_t);
             ssize_t data_len = *((uint32_t *) meta);
             packet->type = *((uint8_t *) type);
-            packet->payload.data = malloc((data_len + 1) * sizeof(char));
+            packet->payload.data = malloc((data_len + 1));
 
             if (!packet->payload.data) {
                 perror("malloc(3) failed");
@@ -409,7 +353,7 @@ int8_t unpack2(ringbuf_t *rbuf, protocol_packet_t *packet) {
 }
 
 
-protocol_packet_t *create_data_packet(uint8_t opcode, char *data) {
+protocol_packet_t *create_data_packet(uint8_t opcode, uint8_t *data) {
     protocol_packet_t *packet = malloc(sizeof(protocol_packet_t));
     if (!packet) {
         perror("malloc(3) failed");
@@ -425,9 +369,9 @@ protocol_packet_t *create_data_packet(uint8_t opcode, char *data) {
 protocol_packet_t *create_sys_pubpacket(uint8_t opcode, uint8_t qos,
         uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
 
-    uint64_t id = read_counter(&global.next_id);
+    uint64_t id = read_counter(global.next_id);
     if ((opcode == DATA || opcode == PUBLISH_MESSAGE) && incr == 1) {
-        id = incr_read(&global.next_id);
+        id = incr_read(global.next_id);
     }
     char *data = append_string(channel_name, message);
     struct sys_pubpacket *sys_pubpacket = malloc(sizeof(struct sys_pubpacket));
@@ -438,7 +382,7 @@ protocol_packet_t *create_sys_pubpacket(uint8_t opcode, uint8_t qos,
     sys_pubpacket->qos = qos;
     sys_pubpacket->redelivered = redelivered;
     sys_pubpacket->id = id;
-    sys_pubpacket->data = data;
+    sys_pubpacket->data = (uint8_t *) data;
 
     protocol_packet_t *packet = malloc(sizeof(protocol_packet_t));
     if (!packet) {
@@ -463,7 +407,7 @@ packed_t *pack_sys_pubpacket(uint8_t opcode, uint8_t qos,
 }
 
 
-packed_t *pack_data_packet(uint8_t opcode, char *data) {
+packed_t *pack_data_packet(uint8_t opcode, uint8_t *data) {
     protocol_packet_t *p = create_data_packet(opcode, data);
     packed_t *packed = pack(p);
     free(p->payload.data);
