@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-std=gnu99 -Wall -lrt -lpthread -O3 -pedantic
+CFLAGS=-ggdb -std=gnu99 -Wall -lrt -lpthread -O3 -pedantic -fsanitize=address -fno-omit-frame-pointer
 BIN=./bin
 SRC=src/map.c 		\
 	src/util.c		\

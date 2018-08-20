@@ -23,6 +23,7 @@ command_t *parse_command(protocol_packet_t *packet) {
     switch (packet->opcode) {
         case ACK:
         case PING:
+        case DATA:
         case CREATE_CHANNEL:
         case DELETE_CHANNEL:
         case UNSUBSCRIBE_CHANNEL:
@@ -33,6 +34,7 @@ command_t *parse_command(protocol_packet_t *packet) {
                 b->offset = 0;
                 b->channel_name = strdup((char *) packet->payload.data);
                 comm->cmd.b = b;
+                free(packet->payload.data);
             }
             break;
         case SUBSCRIBE_CHANNEL:
@@ -44,13 +46,15 @@ command_t *parse_command(protocol_packet_t *packet) {
                 b->offset = packet->payload.sub_packet->offset;
                 b->channel_name = strdup((char *) packet->payload.sub_packet->channel_name);
                 comm->cmd.b = b;
+                free(packet->payload.sub_packet->channel_name);
+                free(packet->payload.sub_packet);
             }
             break;
         case PUBLISH_MESSAGE:
             if (packet->type == SYSTEM_PACKET) {
                 comm->qos = packet->payload.sys_pubpacket->qos;
-                size_t pub_len = strlen((char *) packet->payload.sys_pubpacket->data);
-                memcpy(tmp, packet->payload.sys_pubpacket->data, pub_len);
+                size_t pub_len = strlen((char *) packet->payload.sys_pubpacket->data + 1);
+                memcpy(tmp, packet->payload.sys_pubpacket->data, pub_len - 1);
                 tmp[pub_len] = '\0';
             }
             else {
@@ -71,17 +75,6 @@ command_t *parse_command(protocol_packet_t *packet) {
                 if (!message_str)
                     comm->opcode = ERR_MISS_MEX;
                 else {
-                    size_t message_len = strlen(message_str);
-                    char *message = malloc(message_len);
-
-                    if (!message) {
-                        perror("malloc(3) failed");
-                        exit(EXIT_FAILURE);
-                    }
-
-                    memcpy(message, message_str, message_len);
-                    message[message_len] = '\0';
-
                     struct action *a = malloc(sizeof(struct action));
                     if (!a) {
                         perror("malloc(3) failed");

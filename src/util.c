@@ -17,16 +17,26 @@ void remove_newline(char *str) {
 }
 
 
-char *append_string(const char *str, const char *token) {
-    size_t len = strlen(str) + strlen(token);
-    char *ret = malloc(len * sizeof(char) + 1);
-    if (!ret) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-    *ret = '\0';
-    return strcat(strcat(ret, str), token);
+char* append_string(const char *s1, const char *s2) {
+    const size_t len1 = strlen(s1);
+    const size_t len2 = strlen(s2);
+    char *result = malloc(len1 + len2 + 1); // +1 for the null-terminator
+    // in real code you would check for errors in malloc here
+    memcpy(result, s1, len1);
+    memcpy(result + len1, s2, len2 + 1); // +1 to copy the null-terminator
+    return result;
 }
+
+/* char *append_string(const char *str, const char *token) { */
+/*     size_t len = strlen(str) + strlen(token); */
+/*     char *ret = malloc(len * sizeof(char) + 1); */
+/*     if (!ret) { */
+/*         perror("malloc(3) failed"); */
+/*         exit(EXIT_FAILURE); */
+/*     } */
+/*     *ret = '\0'; */
+/*     return strcat(strcat(ret, str), token); */
+/* } */
 
 
 counter_t *init_counter(void) {
@@ -76,11 +86,13 @@ void s_log(uint8_t level, const char *info, ...) {
         time_t now = time(0);
         strftime(prefix, 50, "%Y-%m-%d %H:%M:%S", localtime(&now));
         sprintf(time_buff, " ");
-        char content[strlen(prefix) + strlen(info) + strlen(time_buff)];
+        int totlen = strlen(prefix) + strlen(info) + strlen(time_buff) + 3;
+        char content[totlen];
         memset(content, 0x00, sizeof(content));
-        strcat(content, prefix);
-        strcat(content, time_buff);
-        strcat(content, info);
+        strncpy(content, prefix, totlen - 1);
+        content[totlen - 1] = '\0';
+        strncat(content, time_buff, totlen - strlen(content) - 1);
+        strncat(content, info, totlen - strlen(content) - 1);
         vfprintf(stdout, content, argptr);
         va_end(argptr);
     }

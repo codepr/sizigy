@@ -92,6 +92,9 @@ static int handle_request(int epollfd, int clientfd) {
         if (n == 0) {
             return 0;
         }
+
+        /* #<{(| Drain ringbuffer if it contains more than one complete packet |)}># */
+        /* while (read_all != -1 || ringbuf_size(rbuf) > 0) { */
         /* Unpack incoming bytes */
         read_all = unpack(rbuf, p);
 
@@ -121,6 +124,7 @@ static int handle_request(int epollfd, int clientfd) {
         exit(EXIT_FAILURE);
     }
 
+    reply->type = ACK_REPLY;
     reply->fd = clientfd;
     reply->data = OK;       // placeholder reply
     reply->qos = comm->qos;
@@ -131,7 +135,6 @@ static int handle_request(int epollfd, int clientfd) {
             DEBUG("*** CREATE %s\n", comm->cmd.b->channel_name);
             channel_t *channel = create_channel(comm->cmd.b->channel_name);
             map_put(global.channels, comm->cmd.b->channel_name, channel);
-            reply->type = ACK_REPLY;
             break;
         case DELETE_CHANNEL:
             DEBUG("*** DELETE %s\n", comm->cmd.b->channel_name);
@@ -141,7 +144,6 @@ static int handle_request(int epollfd, int clientfd) {
                 destroy_channel(chan);
             }
             map_del(global.channels, comm->cmd.b->channel_name);
-            reply->type = ACK_REPLY;
             break;
         case SUBSCRIBE_CHANNEL:
             DEBUG("*** SUBSCRIBE %s\n", comm->cmd.b->channel_name);
@@ -162,7 +164,6 @@ static int handle_request(int epollfd, int clientfd) {
             sub->offset = comm->cmd.b->offset;
             add_subscriber(chan, sub);
             send_queue(chan->messages, sub, send_data);
-            reply->type = ACK_REPLY;
             break;
         case UNSUBSCRIBE_CHANNEL:
             DEBUG("*** UNSUBSCRIBE %s\n", comm->cmd.b->channel_name);
@@ -173,7 +174,6 @@ static int handle_request(int epollfd, int clientfd) {
                 struct subscriber sub = { clientfd, AT_MOST_ONCE, 0, "sub" };
                 del_subscriber(chan, &sub);
             }
-            reply->type = ACK_REPLY;
             break;
         case PUBLISH_MESSAGE:
             reply->data = strdup(comm->cmd.a->message);
@@ -219,28 +219,37 @@ static int handle_request(int epollfd, int clientfd) {
             close(clientfd);
             break;
         default:
+            reply->type = NACK_REPLY;
+            reply->data = E_UNKNOWN;
             DEBUG("*** %s", E_UNKNOWN);
             break;
     }
 
     if (reply->type != NO_REPLY)
         set_epollout(epollfd, clientfd, reply);
-    else
+    else {
         set_epollin(epollfd, clientfd);
+        free(reply);
+    }
 
     pthread_mutex_unlock(&global.lock);
 
     if (p->opcode == PUBLISH_MESSAGE) {
-        if (p->type == SYSTEM_PACKET)
+        if (p->type == SYSTEM_PACKET) {
             free(p->payload.sys_pubpacket->data);
-        /* else */
-        /*     free(p->payload.cli_pubpacket->data); */
+            free(p->payload.sys_pubpacket);
+        }
+        else {
+            free(p->payload.cli_pubpacket->data);
+            free(p->payload.cli_pubpacket);
+        }
         free(comm->cmd.a->channel_name);
         free(comm->cmd.a->message);
         free(comm->cmd.a);
     } else if (p->opcode == SUBSCRIBE_CHANNEL
             || p->opcode == UNSUBSCRIBE_CHANNEL
-            || p->opcode == ACK) {
+            || p->opcode == ACK
+            || p->opcode == DATA) {
         /* free(p.payload.sub_packet.channel_name); */
         free(comm->cmd.b->channel_name);
         free(comm->cmd.b);
@@ -249,6 +258,7 @@ static int handle_request(int epollfd, int clientfd) {
     }
     free(comm);
     free(p);
+    ringbuf_free(rbuf);
 
     return 0;
 }
@@ -278,7 +288,7 @@ static void *worker(void *args) {
             if (events[i].data.fd == global.run) {
                 eventfd_t val;
                 eventfd_read(global.run, &val);
-                DEBUG("Exiting..\n");
+                DEBUG("Stopping epoll loop. Exiting.\n\n");
                 break;
             } else if (events[i].data.fd == fds->serversock) {
                 if (accept_connection(fds->epollfd, events[i].data.fd) == -1) {
@@ -344,6 +354,7 @@ static void *worker(void *args) {
 cleanup:
                 free(p->data);
                 free(p);
+                free(pp);
                 // Rearm descriptor on EPOLLIN
                 set_epollin(fds->epollfd, reply->fd);
                 // Clean up reply
@@ -363,25 +374,25 @@ cleanup:
 }
 
 
-/* static int destroy_queue_data(void *t1, void *t2) { */
-/*     map_entry *kv = (map_entry *) t2; */
-/*     if (kv) { */
-/*         // free value field */
-/*         if (kv->val) { */
-/*             channel_t *c = (channel_t *) kv->val; */
-/*             queue_item *item = c->messages->front; */
-/*             while (item) { */
-/*                 protocol_packet_t *p = (protocol_packet_t *) item->data; */
-/*                 if (p->payload.sys_pubpacket->data) */
-/*                     free(p->payload.sys_pubpacket->data); */
-/*                 free(p); */
-/*                 item = item->next; */
-/*             } */
-/*             #<{(| release_queue(c->messages); |)}># */
-/*         } */
-/*     } else return MAP_ERR; */
-/*     return MAP_OK; */
-/* } */
+static int destroy_queue_data(void *t1, void *t2) {
+    map_entry *kv = (map_entry *) t2;
+    if (kv) {
+        // free value field
+        if (kv->val) {
+            channel_t *c = (channel_t *) kv->val;
+            queue_item *item = c->messages->front;
+            while (item) {
+                protocol_packet_t *p = (protocol_packet_t *) item->data;
+                if (p->payload.sys_pubpacket->data)
+                    free(p->payload.sys_pubpacket->data);
+                free(p->payload.sys_pubpacket);
+                free(p);
+                item = item->next;
+            }
+        }
+    } else return MAP_ERR;
+    return MAP_OK;
+}
 
 
 static int destroy_channels(void *t1, void *t2) {
@@ -452,7 +463,7 @@ int start_server(void) {
     /*     pthread_join(&workers[i], NULL); */
 
     /* Free all resources allocated */
-    /* map_iterate2(global.channels, destroy_queue_data, NULL); */
+    map_iterate2(global.channels, destroy_queue_data, NULL);
     map_iterate2(global.channels, destroy_channels, NULL);
     /* map_release(global.channels); */
     return 0;
