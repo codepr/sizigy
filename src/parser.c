@@ -54,7 +54,7 @@ command_t *parse_command(protocol_packet_t *packet) {
             if (packet->type == SYSTEM_PACKET) {
                 comm->qos = packet->payload.sys_pubpacket->qos;
                 size_t pub_len = strlen((char *) packet->payload.sys_pubpacket->data + 1);
-                memcpy(tmp, packet->payload.sys_pubpacket->data, pub_len - 1);
+                memcpy(tmp, packet->payload.sys_pubpacket->data, pub_len);
                 tmp[pub_len] = '\0';
             }
             else {

@@ -78,8 +78,6 @@ static int handle_request(int epollfd, int clientfd) {
     ssize_t n;
     protocol_packet_t *p = malloc(sizeof(protocol_packet_t));
 
-    pthread_mutex_lock(&(global.lock));
-
     /* We must read all incoming bytes till an entire packet is received. This
        is achieved by using a standardized protocol, which send the size of the
        complete packet as the first 4 bytes. By knowing it we know if the packet is
@@ -87,9 +85,11 @@ static int handle_request(int epollfd, int clientfd) {
     time_t start = time(NULL);
     while (read_all == -1) {
         if ((n = recvall(clientfd, rbuf)) < 0) {
+            free(p);
             return -1;
         }
         if (n == 0) {
+            free(p);
             return 0;
         }
 
@@ -113,6 +113,11 @@ static int handle_request(int epollfd, int clientfd) {
     if (inet_ntop(AF_INET, &addr.sin_addr, ip_buff, sizeof(ip_buff)) == NULL) {
         return -1;
     }
+
+    /* Free ring buffer as we alredy have all needed informations in memory */
+    ringbuf_free(rbuf);
+
+    pthread_mutex_lock(&(global.lock));
 
     /* Parse command according to the communication protocol */
     command_t *comm = parse_command(p);
@@ -258,7 +263,6 @@ static int handle_request(int epollfd, int clientfd) {
     }
     free(comm);
     free(p);
-    ringbuf_free(rbuf);
 
     return 0;
 }
@@ -345,7 +349,7 @@ static void *worker(void *args) {
                     }
                     void *raw_subs = map_get(global.channels, reply->channel);
                     if (!raw_subs) {
-                        channel_t *channel = create_channel(strdup(reply->channel));
+                        channel_t *channel = create_channel(reply->channel);
                         map_put(global.channels, strdup(reply->channel), channel);
                     }
                     channel_t *chan = (channel_t *) map_get(global.channels, reply->channel);

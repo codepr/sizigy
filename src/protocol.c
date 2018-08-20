@@ -183,9 +183,8 @@ static struct cli_pubpacket *unpack_cli_pubpacket(uint8_t *bytes) {
         goto clean_and_exit;
     }
 
-    memcpy(packet->data, data, data_len - 1);
-    packet->data[data_len - 1] = '\0';
-    /* printf(" datalen %ld - pdata len %ld - pdata %s - raw data %ld\n", data_len, strlen((char *) packet->data), packet->data, strlen((char *) data)); */
+    memcpy(packet->data, data, data_len);
+    packet->data[data_len] = '\0';
     return packet;
 
 clean_and_exit:
@@ -377,8 +376,8 @@ int8_t unpack(ringbuf_t *rbuf, protocol_packet_t *packet) {
                 exit(EXIT_FAILURE);
             }
 
-            memcpy(packet->payload.data, data, data_len - 1);
-            packet->payload.data[data_len - 1] = '\0';
+            memcpy(packet->payload.data, data, data_len);
+            packet->payload.data[data_len] = '\0';
             break;
         case SUBSCRIBE_CHANNEL:
             type = bytes + sizeof(uint32_t) + sizeof(uint8_t);
