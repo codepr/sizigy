@@ -1,3 +1,4 @@
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -18,44 +19,11 @@
 #include "server.h"
 #include "parser.h"
 #include "channel.h"
+#include "network.h"
 #include "protocol.h"
 
 
 struct global global;
-
-
-static void add_epollin(int efd, int fd) {
-    struct epoll_event ev;
-    ev.data.fd = fd;
-    ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
-
-    if (epoll_ctl(efd, EPOLL_CTL_ADD, fd, &ev) < 0) {
-        perror("epoll_ctl(2): add epollin");
-    }
-}
-
-
-static void set_epollout(int efd, int fd, void *data) {
-    struct epoll_event ev;
-    if (data)
-        ev.data.ptr = data;
-    ev.events = EPOLLOUT | EPOLLET | EPOLLONESHOT;
-
-    if (epoll_ctl(efd, EPOLL_CTL_MOD, fd, &ev) < 0) {
-        perror("epoll_ctl(2): set epollout");
-    }
-}
-
-
-static void set_epollin(int efd, int fd) {
-    struct epoll_event ev;
-    ev.data.fd = fd;
-    ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
-
-    if (epoll_ctl(efd, EPOLL_CTL_MOD, fd, &ev) < 0) {
-        perror("epoll_ctl(2): set epollin");
-    }
-}
 
 
 static void free_reply(reply_t *reply) {
@@ -63,113 +31,6 @@ static void free_reply(reply_t *reply) {
         free(reply->data);
     if (reply->channel)
         free(reply->channel);
-}
-
-/* Set non-blocking socket */
-static int set_nonblocking(int fd) {
-    int flags, result;
-    flags = fcntl(fd, F_GETFL, 0);
-    if (flags == -1) {
-        perror("fcntl");
-        return -1;
-    }
-    result = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    if (result == -1) {
-        perror("fcntl");
-        return -1;
-    }
-    return 0;
-}
-
-
-/* Auxiliary function for creating epoll server */
-static int create_and_bind(const char *host, const char *port) {
-    struct addrinfo hints;
-    struct addrinfo *result, *rp;
-    int sfd;
-
-    memset(&hints, 0, sizeof (struct addrinfo));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;     /* 0.0.0.0 all interfaces */
-
-    if (getaddrinfo(host, port, &hints, &result) != 0) {
-        perror("getaddrinfo error");
-        return -1;
-    }
-
-    for (rp = result; rp != NULL; rp = rp->ai_next) {
-        sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-
-        if (sfd == -1) continue;
-
-        /* set SO_REUSEADDR so the socket will be reusable after process kill */
-        if (setsockopt(sfd, SOL_SOCKET, (SO_REUSEPORT | SO_REUSEADDR),
-                    &(int) { 1 }, sizeof(int)) < 0)
-            perror("SO_REUSEADDR");
-
-        if ((bind(sfd, rp->ai_addr, rp->ai_addrlen)) == 0) {
-            /* Succesful bind */
-            break;
-        }
-        close(sfd);
-    }
-
-    if (rp == NULL) {
-        perror("Could not bind");
-        return -1;
-    }
-
-    freeaddrinfo(result);
-    return sfd;
-}
-
-
-/*
- * Create a non-blocking socket and make it listen on the specfied address and
- * port
- */
-static int make_listen(const char *host, const char *port) {
-    int sfd;
-
-    if ((sfd = create_and_bind(host, port)) == -1)
-        abort();
-
-    if ((set_nonblocking(sfd)) == -1)
-        abort();
-
-    if ((listen(sfd, SOMAXCONN)) == -1) {
-        perror("listen");
-        abort();
-    }
-
-    return sfd;
-}
-
-
-static int accept_connection(int epollfd, int serversock) {
-
-    int clientsock;
-    struct sockaddr_in addr;
-    socklen_t addrlen = sizeof(addr);
-    if ((clientsock = accept(serversock, (struct sockaddr *) &addr, &addrlen)) < 0) {
-        return -1;
-    }
-
-    set_nonblocking(clientsock);
-
-    char ip_buff[INET_ADDRSTRLEN+1];
-    if (inet_ntop(AF_INET, &addr.sin_addr, ip_buff, sizeof(ip_buff)) == NULL) {
-        close(clientsock);
-        return -1;
-    }
-
-    DEBUG("*** Client connection from %s\n", ip_buff);
-
-    // add to EPOLLIN client sock
-    add_epollin(epollfd, clientsock);
-
-    return 0;
 }
 
 
@@ -223,6 +84,7 @@ static int handle_request(int epollfd, int clientfd) {
        is achieved by using a standardized protocol, which send the size of the
        complete packet as the first 4 bytes. By knowing it we know if the packet is
        ready to be deserialized and used.*/
+    time_t start = time(NULL);
     while (read_all == -1) {
         if ((n = recvall(clientfd, rbuf)) < 0) {
             return -1;
@@ -232,7 +94,13 @@ static int handle_request(int epollfd, int clientfd) {
         }
         /* Unpack incoming bytes */
         read_all = unpack(rbuf, p);
+
+        if (time(NULL) - start > TIMEOUT)
+            read_all = 1;
     }
+
+    if (read_all == 1)
+        return -1;
 
     if (getpeername(clientfd, (struct sockaddr *) &addr, &addrlen) < 0) {
         return -1;
@@ -258,7 +126,7 @@ static int handle_request(int epollfd, int clientfd) {
     reply->qos = comm->qos;
     void *raw_chan = NULL;  // placeholder for map_get
 
-    switch(comm->opcode) {
+    switch (comm->opcode) {
         case CREATE_CHANNEL:
             DEBUG("*** CREATE %s\n", comm->cmd.b->channel_name);
             channel_t *channel = create_channel(comm->cmd.b->channel_name);
@@ -365,8 +233,8 @@ static int handle_request(int epollfd, int clientfd) {
     if (p->opcode == PUBLISH_MESSAGE) {
         if (p->type == SYSTEM_PACKET)
             free(p->payload.sys_pubpacket->data);
-        else
-            free(p->payload.cli_pubpacket->data);
+        /* else */
+        /*     free(p->payload.cli_pubpacket->data); */
         free(comm->cmd.a->channel_name);
         free(comm->cmd.a->message);
         free(comm->cmd.a);
@@ -588,51 +456,4 @@ int start_server(void) {
     map_iterate2(global.channels, destroy_channels, NULL);
     /* map_release(global.channels); */
     return 0;
-}
-
-
-int sendall(int sfd, uint8_t *buf, ssize_t *len) {
-    int total = 0;
-    ssize_t bytesleft = *len;
-    int n;
-    while (total < *len) {
-        n = send(sfd, buf + total, bytesleft, MSG_NOSIGNAL);
-        if (n == -1) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-                break;
-            else {
-                perror("send(2): error sending data\n");
-                break;
-            }
-        }
-        total += n;
-        bytesleft -= n;
-    }
-    *len = total;
-    return n == -1 ? -1 : 0;
-}
-
-
-int recvall(int sfd, ringbuf_t *ringbuf) {
-    int n = 0;
-    int total = 0;
-    uint8_t buf[BUFSIZE];
-    for (;;) {
-        if ((n = recv(sfd, buf, BUFSIZE - 1, 0)) < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                break;
-            } else {
-                perror("recv(2): error reading data\n");
-                return -1;
-            }
-        }
-        if (n == 0) {
-            return 0;
-        }
-
-        ringbuf_bulk_put(ringbuf, buf, n);
-
-        total += n;
-    }
-    return total;
 }

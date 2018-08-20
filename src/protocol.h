@@ -70,7 +70,9 @@ typedef struct {
 packed_t *pack(protocol_packet_t*);
 int8_t unpack(ringbuf_t *, protocol_packet_t *);
 protocol_packet_t *create_data_packet(uint8_t, uint8_t *);
+protocol_packet_t *create_sys_subpacket(uint8_t, uint8_t, int64_t, char *);
 protocol_packet_t *create_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
+protocol_packet_t *create_cli_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *);
 packed_t *pack_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
 packed_t *pack_data_packet(uint8_t, uint8_t *);
 

@@ -3,8 +3,8 @@
 #include <sys/socket.h>
 #include "map.h"
 #include "util.h"
-#include "server.h"
 #include "parser.h"
+#include "network.h"
 #include "channel.h"
 
 

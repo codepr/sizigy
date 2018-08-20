@@ -10,13 +10,13 @@
 
 #define EPOLL_WORKERS 4
 #define MAX_EVENTS	  64
-#define BUFSIZE		  2048
 
 #define OK          "OK\n"
 #define E_UNKNOWN   "ERR: Unknown command\n"
 #define E_MISS_CHAN "ERR: Missing channel name\n"
 #define E_MISS_MEX  "ERR: Missing message to publish\n"
 
+#define TIMEOUT      60
 
 enum REPLY_TYPE { NO_REPLY, ACK_REPLY, NACK_REPLY, DATA_REPLY, PING_REPLY };
 
@@ -50,7 +50,5 @@ extern struct global global;
 
 
 int start_server();
-int sendall(int , uint8_t *, ssize_t *);
-int recvall(int, ringbuf_t *);
 
 #endif
