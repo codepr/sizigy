@@ -6,12 +6,8 @@
 #include "util.h"
 
 
-static int MAX_COMMAND_SIZE = 2048;
-
-
 command_t *parse_command(protocol_packet_t *packet) {
-
-    char tmp[MAX_COMMAND_SIZE];
+    char *tmp = NULL;
     command_t *comm = malloc(sizeof(command_t));
     if (!comm) {
         perror("malloc(3) failed");
@@ -54,6 +50,7 @@ command_t *parse_command(protocol_packet_t *packet) {
             if (packet->type == SYSTEM_PACKET) {
                 comm->qos = packet->payload.sys_pubpacket->qos;
                 size_t pub_len = strlen((char *) packet->payload.sys_pubpacket->data + 1);
+                tmp = malloc(pub_len + 1);
                 memcpy(tmp, packet->payload.sys_pubpacket->data, pub_len);
                 tmp[pub_len] = '\0';
             }
@@ -61,6 +58,7 @@ command_t *parse_command(protocol_packet_t *packet) {
                 // XXX should check strictly for the only two options available
                 comm->qos = packet->payload.cli_pubpacket->qos;
                 size_t pub_len = strlen((char *) packet->payload.cli_pubpacket->data);
+                tmp = malloc(pub_len + 1);
                 memcpy(tmp, packet->payload.cli_pubpacket->data, pub_len);
                 tmp[pub_len] = '\0';
             }
@@ -69,8 +67,6 @@ command_t *parse_command(protocol_packet_t *packet) {
             if (!channel)
                 comm->opcode = ERR_MISS_CHAN;
             else {
-                /* printf("paylad=%s payload_len=%ld size=%ld len=%ld\n", channel_name, payload_len, sizeof(channel_name), strlen(channel_name)); */
-
                 char *message_str = strtok(NULL, "\0");
                 if (!message_str)
                     comm->opcode = ERR_MISS_MEX;
@@ -97,5 +93,6 @@ command_t *parse_command(protocol_packet_t *packet) {
             comm->opcode = ERR_UNKNOWN;
             break;
     }
+    free(tmp);
     return comm;
 }

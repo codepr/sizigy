@@ -62,48 +62,16 @@ static int close_socket(void *arg1, void *arg2) {
 
 
 static int handle_request(int epollfd, int clientfd) {
-
     /* Buffer to initialize the ring buffer, used to handle input from client */
-    uint8_t buffer[BUFSIZE * 3];
+    uint8_t buffer[ONEMB * 2];
 
     /* Ringbuffer pointer struct, helpful to handle different and unknown
        size of chunks of data which can result in partially formed packets or
        overlapping as well */
-    ringbuf_t *rbuf = ringbuf_init(buffer, BUFSIZE * 3);
+    ringbuf_t *rbuf = ringbuf_init(buffer, ONEMB * 2);
 
-    /* Read all data to form a packet flag */
-    int8_t read_all = -1;
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
-    ssize_t n;
-    protocol_packet_t *p = malloc(sizeof(protocol_packet_t));
-
-    /* We must read all incoming bytes till an entire packet is received. This
-       is achieved by using a standardized protocol, which send the size of the
-       complete packet as the first 4 bytes. By knowing it we know if the packet is
-       ready to be deserialized and used.*/
-    time_t start = time(NULL);
-    while (read_all == -1) {
-        if ((n = recvall(clientfd, rbuf)) < 0) {
-            free(p);
-            return -1;
-        }
-        if (n == 0) {
-            free(p);
-            return 0;
-        }
-
-        /* #<{(| Drain ringbuffer if it contains more than one complete packet |)}># */
-        /* while (read_all != -1 || ringbuf_size(rbuf) > 0) { */
-        /* Unpack incoming bytes */
-        read_all = unpack(rbuf, p);
-
-        if (time(NULL) - start > TIMEOUT)
-            read_all = 1;
-    }
-
-    if (read_all == 1)
-        return -1;
 
     if (getpeername(clientfd, (struct sockaddr *) &addr, &addrlen) < 0) {
         return -1;
@@ -114,8 +82,39 @@ static int handle_request(int epollfd, int clientfd) {
         return -1;
     }
 
+    /* Read all data to form a packet flag */
+    int8_t read_all = -1;
+    ssize_t n;
+    protocol_packet_t *p = malloc(sizeof(protocol_packet_t));
+
+    /* We must read all incoming bytes till an entire packet is received. This
+       is achieved by using a standardized protocol, which send the size of the
+       complete packet as the first 4 bytes. By knowing it we know if the packet is
+       ready to be deserialized and used.*/
+    time_t start = time(NULL);
+    while (read_all != 0) {
+        if ((n = recvall(clientfd, rbuf, read_all)) < 0) {
+            free(p);
+            return -1;
+        }
+        if (n == 0) {
+            free(p);
+            return 0;
+        }
+
+        printf("%ld\n", ringbuf_size(rbuf));
+        read_all = unpack(rbuf, p);
+        printf("%d\n", read_all);
+
+        if ((time(NULL) - start) > TIMEOUT)
+            read_all = 1;
+    }
+
     /* Free ring buffer as we alredy have all needed informations in memory */
     ringbuf_free(rbuf);
+
+    if (read_all == 1)
+        return -1;
 
     pthread_mutex_lock(&(global.lock));
 
@@ -425,7 +424,6 @@ int start_server(void) {
     global.channels = map_create();
     global.ack_waiting = map_create();
     global.next_id = init_counter();  // counter to get message id, should be enclosed inside locks
-    /* init_counter(global.next_id);  // counter to get message id, should be enclosed inside locks */
     pthread_mutex_init(&(global.lock), NULL);
     int epollfd;
 

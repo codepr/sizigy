@@ -161,7 +161,7 @@ int accept_connection(int epollfd, int serversock) {
 int sendall(int sfd, uint8_t *buf, ssize_t *len) {
     int total = 0;
     ssize_t bytesleft = *len;
-    int n;
+    int n = 0;
     while (total < *len) {
         n = send(sfd, buf + total, bytesleft, MSG_NOSIGNAL);
         if (n == -1) {
@@ -180,12 +180,17 @@ int sendall(int sfd, uint8_t *buf, ssize_t *len) {
 }
 
 
-int recvall(int sfd, ringbuf_t *ringbuf) {
+int recvall(int sfd, ringbuf_t *ringbuf, ssize_t len) {
     int n = 0;
     int total = 0;
-    uint8_t buf[BUFSIZE];
+    int bufsize = 256;
+    if (len > 0)
+        bufsize = len;
+    if (len == 1)
+        bufsize = 2;
+    uint8_t buf[bufsize];
     for (;;) {
-        if ((n = recv(sfd, buf, BUFSIZE - 1, 0)) < 0) {
+        if ((n = recv(sfd, buf, bufsize - 1, 0)) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
             } else {

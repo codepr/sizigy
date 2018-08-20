@@ -6,7 +6,6 @@
 #include <pthread.h>
 #include "map.h"
 #include "util.h"
-#include "ringbuf.h"
 
 #define EPOLL_WORKERS 4
 #define MAX_EVENTS	  64

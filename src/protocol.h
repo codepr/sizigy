@@ -77,4 +77,6 @@ packed_t *pack_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t)
 packed_t *pack_data_packet(uint8_t, uint8_t *);
 
 
+struct cli_pubpacket *unpack_cli_pubpacket(uint8_t *bytes);
+packed_t *pack_clipubpacket(struct cli_pubpacket *packet);
 #endif
