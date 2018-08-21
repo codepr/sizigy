@@ -185,9 +185,7 @@ int recvall(int sfd, ringbuf_t *ringbuf, ssize_t len) {
     int total = 0;
     int bufsize = 256;
     if (len > 0)
-        bufsize = len;
-    if (len == 1)
-        bufsize = 2;
+        bufsize = len + 1;
     uint8_t buf[bufsize];
     for (;;) {
         if ((n = recv(sfd, buf, bufsize - 1, 0)) < 0) {
@@ -203,7 +201,7 @@ int recvall(int sfd, ringbuf_t *ringbuf, ssize_t len) {
         }
         /* Insert all read bytes in the ring buffer */
         // FIXME check the full ring buffer scenario
-        ringbuf_bulk_put(ringbuf, buf, n);
+        ringbuf_bulk_push(ringbuf, buf, n);
 
         total += n;
     }

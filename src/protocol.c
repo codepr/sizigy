@@ -130,7 +130,7 @@ static struct sys_pubpacket *unpack_sys_pubpacket(uint8_t *bytes) {
 }
 
 
-packed_t *pack_clipubpacket(struct cli_pubpacket *packet) {
+static packed_t *pack_clipubpacket(struct cli_pubpacket *packet) {
     ssize_t dlen = strlen((char *) packet->data);
     uint32_t tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + dlen;
     uint8_t *raw = malloc(tlen);
@@ -160,7 +160,7 @@ packed_t *pack_clipubpacket(struct cli_pubpacket *packet) {
 }
 
 
-struct cli_pubpacket *unpack_cli_pubpacket(uint8_t *bytes) {
+static struct cli_pubpacket *unpack_cli_pubpacket(uint8_t *bytes) {
     uint8_t *meta = bytes;
     uint8_t *qos = meta + sizeof(uint32_t);
     uint8_t *redelivered = qos + sizeof(uint8_t);
@@ -321,33 +321,7 @@ clean_and_exit:
 }
 
 
-int8_t unpack(ringbuf_t *rbuf, protocol_packet_t *packet) {
-
-    /* Check the size of the ring buffer, we need at least the first 4 bytes in
-       order to get the total length of the packet */
-    if (ringbuf_empty(rbuf) || ringbuf_size(rbuf) < sizeof(uint32_t))
-        return -1;
-
-    uint8_t bytes[ringbuf_capacity(rbuf)];
-    uint8_t *tmp = bytes;
-
-    /* Try to read at least length of the packet */
-    for (uint8_t i = 0; i < sizeof(uint32_t); i++)
-        ringbuf_get(rbuf, tmp++);
-
-    uint8_t *tot = bytes;
-    uint32_t tlen = *((uint32_t *) tot);
-
-    /* If there's no bytes nr equal to the total size of the packet abort and read again */
-    if (ringbuf_size(rbuf) < tlen - sizeof(uint32_t))
-        return tlen - sizeof(uint32_t) - ringbuf_size(rbuf);
-
-    /* Empty the rest of the ring buffer */
-    while ((tlen - sizeof(uint32_t)) > 0) {
-        ringbuf_get(rbuf, tmp++);
-        --tlen;
-    }
-
+int8_t unpack(uint8_t *bytes, protocol_packet_t *packet) {
     /* Start unpacking bytes into the protocol_packet_t structure */
     uint8_t *opcode = bytes + sizeof(uint32_t);
     uint8_t *meta = NULL;

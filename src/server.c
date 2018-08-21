@@ -61,6 +61,36 @@ static int close_socket(void *arg1, void *arg2) {
 }
 
 
+static uint32_t parse_header(ringbuf_t *rbuf, char *bytearray) {
+    /* Check the size of the ring buffer, we need at least the first 4 bytes in
+       order to get the total length of the packet */
+    if (ringbuf_empty(rbuf) || ringbuf_size(rbuf) < sizeof(uint32_t))
+        return -1;
+
+    uint8_t *tmp = (uint8_t *) bytearray;
+
+    /* Try to read at least length of the packet */
+    for (uint8_t i = 0; i < sizeof(uint32_t); i++)
+        ringbuf_pop(rbuf, tmp++);
+
+    uint8_t *tot = (uint8_t *) bytearray;
+    uint32_t tlen = *((uint32_t *) tot);
+
+    /* If there's no bytes nr equal to the total size of the packet abort and
+       read again */
+    if (ringbuf_size(rbuf) < tlen - sizeof(uint32_t))
+        return tlen - sizeof(uint32_t) - ringbuf_size(rbuf);
+
+    /* Empty the rest of the ring buffer */
+    while ((tlen - sizeof(uint32_t)) > 0) {
+        ringbuf_pop(rbuf, tmp++);
+        --tlen;
+    }
+
+    return 0;
+}
+
+
 static int handle_request(int epollfd, int clientfd) {
     /* Buffer to initialize the ring buffer, used to handle input from client */
     uint8_t buffer[ONEMB * 2];
@@ -93,6 +123,8 @@ static int handle_request(int epollfd, int clientfd) {
        ready to be deserialized and used.*/
     time_t start = time(NULL);
     while (read_all != 0) {
+        /* Read till EAGAIN or EWOULDBLOCK, passing an optional parameter len
+           which define the remaining bytes to be read */
         if ((n = recvall(clientfd, rbuf, read_all)) < 0) {
             free(p);
             return -1;
@@ -102,9 +134,13 @@ static int handle_request(int epollfd, int clientfd) {
             return 0;
         }
 
-        printf("%ld\n", ringbuf_size(rbuf));
-        read_all = unpack(rbuf, p);
-        printf("%d\n", read_all);
+        char bytes[ringbuf_size(rbuf)];
+        /* Check the header, returning -1 in case of insufficient informations
+           about the total packet length and the subsequent payload bytes */
+        read_all = parse_header(rbuf, bytes);
+
+        if (read_all == 0)
+            read_all = unpack((uint8_t *) bytes, p);
 
         if ((time(NULL) - start) > TIMEOUT)
             read_all = 1;
@@ -459,12 +495,8 @@ int start_server(void) {
     /* Use main thread as a worker too */
     worker(&fds);
 
-    free(global.next_id);
-
-    /* for (int i = 0; i < EPOLL_WORKERS; ++i) */
-    /*     pthread_join(&workers[i], NULL); */
-
     /* Free all resources allocated */
+    free(global.next_id);
     map_iterate2(global.channels, destroy_queue_data, NULL);
     map_iterate2(global.channels, destroy_channels, NULL);
     /* map_release(global.channels); */

@@ -36,11 +36,17 @@ typedef struct {
 
 
 struct global {
+    /* Eventfd to break the epoll_wait loop in case of signals */
     uint8_t run;
+    /* Logging level, to be set by reading configuration */
     uint8_t loglevel;
+    /* Atomic auto-increment unsigned long long int to get the next message ID */
     counter_t *next_id;
+    /* Channels mapping */
     map_t *channels;
+    /* ACK awaiting mapping fds (Unused) */
     map_t *ack_waiting;
+    /* Global lock to avoid race conditions on critical shared parts */
     pthread_mutex_t lock;
 };
 

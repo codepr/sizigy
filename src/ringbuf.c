@@ -99,7 +99,7 @@ static void retreat_pointer(ringbuf_t *rbuf) {
 }
 
 
-int8_t ringbuf_put(ringbuf_t *rbuf, uint8_t data) {
+int8_t ringbuf_push(ringbuf_t *rbuf, uint8_t data) {
     int8_t r = -1;
 
     assert(rbuf && rbuf->buffer);
@@ -114,10 +114,10 @@ int8_t ringbuf_put(ringbuf_t *rbuf, uint8_t data) {
 }
 
 
-int8_t ringbuf_bulk_put(ringbuf_t *rbuf, uint8_t *data, size_t size) {
+int8_t ringbuf_bulk_push(ringbuf_t *rbuf, uint8_t *data, size_t size) {
     int8_t r = 0;
     for (uint8_t i = 0; i < size; ++i) {
-        r = ringbuf_put(rbuf, data[i]);
+        r = ringbuf_push(rbuf, data[i]);
         if (r == -1)
             break;
     }
@@ -125,7 +125,7 @@ int8_t ringbuf_bulk_put(ringbuf_t *rbuf, uint8_t *data, size_t size) {
 }
 
 
-int8_t ringbuf_get(ringbuf_t *rbuf, uint8_t *data) {
+int8_t ringbuf_pop(ringbuf_t *rbuf, uint8_t *data) {
     assert(rbuf && data && rbuf->buffer);
 
     int8_t r = -1;

@@ -12,12 +12,12 @@
 
 int handle_request(int epollfd, int fd) {
     /* Buffer to initialize the ring buffer, used to handle input from client */
-    uint8_t buffer[BUFSIZE * 3];
+    uint8_t buffer[ONEMB * 2];
 
     /* Ringbuffer pointer struct, helpful to handle different and unknown
        size of chunks of data which can result in partially formed packets or
        overlapping as well */
-    ringbuf_t *rbuf = ringbuf_init(buffer, BUFSIZE * 3);
+    ringbuf_t *rbuf = ringbuf_init(buffer, ONEMB * 2);
 
     /* Read all data to form a packet flag */
     int8_t read_all = -1;
@@ -25,8 +25,8 @@ int handle_request(int epollfd, int fd) {
     protocol_packet_t *p = malloc(sizeof(protocol_packet_t));
 
     time_t start = time(NULL);
-    while (read_all == -1) {
-        if ((n = recvall(fd, rbuf)) < 0) {
+    while (read_all != 0) {
+        if ((n = recvall(fd, rbuf, read_all)) < 0) {
             return -1;
         }
         if (n == 0) {
