@@ -10,7 +10,7 @@
 #define SYSTEM_PACKET 0x81
 
 /* Operation codes */
-#define CONNECT             0x00
+#define HANDSHAKE           0x00
 #define CREATE_CHANNEL      0x01
 #define DELETE_CHANNEL      0x02
 #define SUBSCRIBE_CHANNEL   0x03

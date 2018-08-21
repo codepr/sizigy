@@ -149,8 +149,10 @@ static int handle_request(int epollfd, int clientfd) {
     /* Free ring buffer as we alredy have all needed informations in memory */
     ringbuf_free(rbuf);
 
-    if (read_all == 1)
+    if (read_all == 1) {
+        free(p);
         return -1;
+    }
 
     pthread_mutex_lock(&(global.lock));
 
@@ -303,11 +305,66 @@ static int handle_request(int epollfd, int clientfd) {
 }
 
 
+static int reply_data(reply_t *reply) {
+    int ret = 0;
+    ssize_t sent;
+    protocol_packet_t *pp = create_data_packet(ACK, (uint8_t *) OK);
+    packed_t *p = pack(pp);
+
+    if (reply->type == ACK_REPLY) {
+        if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
+            perror("send(2): can't write on socket descriptor");
+            ret = -1;
+        }
+    } else if (reply->type == NACK_REPLY) {
+        pp->opcode = NACK;
+        pp->payload.data = (uint8_t *) reply->data;
+        free(p->data);
+        free(p);
+        p = pack(pp);
+        if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
+            perror("send(2): can't write on socket descriptor");
+            ret = -1;
+        }
+    } else if (reply->type == PING_REPLY) {
+        pp->opcode = PING;
+        pp->payload.data = (uint8_t *) reply->data;
+        free(p->data);
+        free(p);
+        p = pack(pp);
+        if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
+            perror("send(2): can't write on socket descriptor");
+            ret = -1;
+        }
+    } else if (reply->type == NO_REPLY) {
+        // Ignore
+    } else {
+        // reply to original sender
+        if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
+            perror("send(2): can't write on socket descriptor");
+            ret = -1;
+        }
+        void *raw_subs = map_get(global.channels, reply->channel);
+        if (!raw_subs) {
+            channel_t *channel = create_channel(reply->channel);
+            map_put(global.channels, strdup(reply->channel), channel);
+        }
+        channel_t *chan = (channel_t *) map_get(global.channels, reply->channel);
+        publish_message(chan, reply->qos, strdup(reply->data));
+    }
+
+    free(p->data);
+    free(p);
+    free(pp);
+    return ret;
+}
+
+
 static void *worker(void *args) {
     struct socks *fds = (struct socks *) args;
     struct epoll_event *events = malloc(sizeof(*events) * MAX_EVENTS);
 
-    if (events == NULL) {
+    if (!events) {
         perror("malloc(3) failed");
         pthread_exit(NULL);
     }
@@ -347,53 +404,9 @@ static void *worker(void *args) {
             } else if (events[i].events & EPOLLOUT) {
 
                 reply_t *reply = (reply_t *) events[i].data.ptr;
-                ssize_t sent;
-                protocol_packet_t *pp = create_data_packet(ACK, (uint8_t *) OK);
-                packed_t *p = pack(pp);
-
-                if (reply->type == ACK_REPLY) {
-                    if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
-                        perror("send(2): can't write on socket descriptor");
-                        goto cleanup;
-                    }
-                } else if (reply->type == NACK_REPLY) {
-                    pp->opcode = NACK;
-                    pp->payload.data = (uint8_t *) reply->data;
-                    free(p->data);
-                    p = pack(pp);
-                    if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
-                        perror("send(2): can't write on socket descriptor");
-                        goto cleanup;
-                    }
-                } else if (reply->type == PING_REPLY) {
-                    pp->opcode = PING;
-                    pp->payload.data = (uint8_t *) reply->data;
-                    free(p->data);
-                    p = pack(pp);
-                    if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
-                        perror("send(2): can't write on socket descriptor");
-                        goto cleanup;
-                    }
-                } else if (reply->type == NO_REPLY) {
-                    // Ignore
-                } else {
-                    // reply to original sender
-                    if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
-                        perror("send(2): can't write on socket descriptor");
-                        goto cleanup;
-                    }
-                    void *raw_subs = map_get(global.channels, reply->channel);
-                    if (!raw_subs) {
-                        channel_t *channel = create_channel(reply->channel);
-                        map_put(global.channels, strdup(reply->channel), channel);
-                    }
-                    channel_t *chan = (channel_t *) map_get(global.channels, reply->channel);
-                    publish_message(chan, reply->qos, strdup(reply->data));
+                if (reply_data(reply) == -1) {
+                    perror("Error replying data");
                 }
-cleanup:
-                free(p->data);
-                free(p);
-                free(pp);
                 // Rearm descriptor on EPOLLIN
                 set_epollin(fds->epollfd, reply->fd);
                 // Clean up reply
