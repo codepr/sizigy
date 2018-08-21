@@ -33,6 +33,19 @@ command_t *parse_command(protocol_packet_t *packet) {
                 free(packet->payload.data);
             }
             break;
+        case HANDSHAKE:
+            if (packet->payload.handshake_packet->clean_session == 0 && !packet->payload.handshake_packet->id)
+                comm->opcode = ERR_MISS_ID;
+            else {
+                comm->cmd.h->clean_session = packet->payload.handshake_packet->clean_session;
+                if (!packet->payload.handshake_packet->id)
+                    comm->cmd.h->id = (char *) random_name(8);
+                else
+                    comm->cmd.h->id = strdup(packet->payload.handshake_packet->id);
+                free(packet->payload.handshake_packet->id);
+                free(packet->payload.handshake_packet);
+            }
+            break;
         case SUBSCRIBE_CHANNEL:
             if (!packet->payload.sub_packet->channel_name)
                 comm->opcode = ERR_MISS_CHAN;

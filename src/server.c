@@ -25,6 +25,9 @@
 
 struct global global;
 
+static int reply_data(int, client_t *);
+static int handle_request(int, client_t *);
+
 
 static void free_reply(reply_t *reply) {
     if (reply->data)
@@ -51,14 +54,14 @@ static int send_data(void *arg1, void *ptr) {
 }
 
 
-static int close_socket(void *arg1, void *arg2) {
-    int fd = *(int *) arg1;
-    map_entry *kv = (map_entry *) arg2;
-    struct subscriber *sub = (struct subscriber *) kv->val;
-    if (sub->fd == fd)
-        close(sub->fd);
-    return 0;
-}
+/* static int close_socket(void *arg1, void *arg2) { */
+/*     int fd = *(int *) arg1; */
+/*     map_entry *kv = (map_entry *) arg2; */
+/*     struct subscriber *sub = (struct subscriber *) kv->val; */
+/*     if (sub->fd == fd) */
+/*         close(sub->fd); */
+/*     return 0; */
+/* } */
 
 
 static uint32_t parse_header(ringbuf_t *rbuf, char *bytearray) {
@@ -91,7 +94,8 @@ static uint32_t parse_header(ringbuf_t *rbuf, char *bytearray) {
 }
 
 
-static int handle_request(int epollfd, int clientfd) {
+static int handle_request(int epollfd, client_t *client) {
+    int clientfd = client->fd;
     /* Buffer to initialize the ring buffer, used to handle input from client */
     uint8_t buffer[ONEMB * 2];
 
@@ -159,6 +163,8 @@ static int handle_request(int epollfd, int clientfd) {
     /* Parse command according to the communication protocol */
     command_t *comm = parse_command(p);
 
+    pthread_mutex_unlock(&(global.lock));
+
     reply_t *reply = malloc(sizeof(reply_t));
 
     if (!reply) {
@@ -171,6 +177,7 @@ static int handle_request(int epollfd, int clientfd) {
     reply->data = OK;       // placeholder reply
     reply->qos = comm->qos;
     void *raw_chan = NULL;  // placeholder for map_get
+    char *id = NULL;
 
     switch (comm->opcode) {
         case CREATE_CHANNEL:
@@ -186,6 +193,18 @@ static int handle_request(int epollfd, int clientfd) {
                 destroy_channel(chan);
             }
             map_del(global.channels, comm->cmd.b->channel_name);
+            break;
+        case HANDSHAKE:
+            id = append_string("C:", comm->cmd.h->id);
+            if (comm->cmd.h->clean_session == 1) {
+                map_del(global.clients, client->id);
+                map_put(global.clients, id, client);
+            } else
+                // Should check if global map contains an entry and return an
+                // error code in case of failure, for now we just add the new
+                // client
+                map_put(global.clients, id, client);
+            free(comm->cmd.h->id);
             break;
         case SUBSCRIBE_CHANNEL:
             DEBUG("*** SUBSCRIBE %s\n", comm->cmd.b->channel_name);
@@ -255,8 +274,16 @@ static int handle_request(int epollfd, int clientfd) {
             reply->type = NACK_REPLY;
             reply->data = E_MISS_MEX;
             break;
+        case ERR_MISS_ID:
+            DEBUG("*** %s", E_MISS_ID);
+            reply->type = NACK_REPLY;
+            reply->data = E_MISS_ID;
+            break;
         case QUIT:
             DEBUG("*** QUIT\n");
+            // XXX hacky
+            free(client->reply);
+            free(client);
             shutdown(clientfd, 0);
             close(clientfd);
             break;
@@ -267,10 +294,16 @@ static int handle_request(int epollfd, int clientfd) {
             break;
     }
 
+    pthread_mutex_lock(&(global.lock));
+
+    client->reply = reply;
+    client->ctx_handler = reply_data;
+
     if (reply->type != NO_REPLY)
-        set_epollout(epollfd, clientfd, reply);
+        mod_epoll(epollfd, clientfd, EPOLLOUT, client);
     else {
-        set_epollin(epollfd, clientfd);
+        client->ctx_handler = handle_request;
+        mod_epoll(epollfd, clientfd, EPOLLIN, client);
         free(reply);
     }
 
@@ -292,7 +325,6 @@ static int handle_request(int epollfd, int clientfd) {
             || p->opcode == UNSUBSCRIBE_CHANNEL
             || p->opcode == ACK
             || p->opcode == DATA) {
-        /* free(p.payload.sub_packet.channel_name); */
         free(comm->cmd.b->channel_name);
         free(comm->cmd.b);
     } else {
@@ -305,7 +337,8 @@ static int handle_request(int epollfd, int clientfd) {
 }
 
 
-static int reply_data(reply_t *reply) {
+static int reply_data(int epollfd, client_t *client) {
+    reply_t *reply = client->reply;
     int ret = 0;
     ssize_t sent;
     protocol_packet_t *pp = create_data_packet(ACK, (uint8_t *) OK);
@@ -356,7 +389,42 @@ static int reply_data(reply_t *reply) {
     free(p->data);
     free(p);
     free(pp);
+
+    if (reply->type == DATA_REPLY)
+        free_reply(reply);
+    free(reply);
+
+    client->reply = NULL;
+    client->ctx_handler = handle_request;
+    mod_epoll(epollfd, client->fd, EPOLLIN, client);
     return ret;
+}
+
+
+static int accept_conn(int epollfd, client_t *client) {
+    int fd = client->fd;
+    /* Accept the connection */
+    int clientsock = accept_connection(epollfd, fd);
+    /* Abort if not accepted */
+    if (clientsock == -1)
+        return -1;
+    /* Create a client structure to handle his context connection */
+    client_t *new_client = malloc(sizeof(client_t));
+    new_client->status = ONLINE;
+    new_client->fd = clientsock;
+    new_client->ctx_handler = handle_request;
+    const char *id = random_name(8);
+    char *name = append_string("C:", id);  // C states that it is a client (could be another sizigy instance)
+    free((void *) id);
+    new_client->id = name;
+    new_client->reply = NULL;
+    /* Add new accepted client to the global map */
+    map_put(global.clients, name, new_client);
+    /* Add it to the epoll loop */
+    add_epoll(epollfd, clientsock, new_client);
+    /* Rearm server fd to accept new connections */
+    mod_epoll(epollfd, fd, EPOLLIN, client);
+    return 0;
 }
 
 
@@ -372,6 +440,7 @@ static void *worker(void *args) {
     int events_cnt;
     while ((events_cnt = epoll_wait(fds->epollfd, events, MAX_EVENTS, -1)) > 0) {
         for (int i = 0; i < events_cnt; i++) {
+            /* Check for errors first */
             if ((events[i].events & EPOLLERR) ||
                     (events[i].events & EPOLLHUP) ||
                     (!(events[i].events & EPOLLIN) && !(events[i].events & EPOLLOUT))) {
@@ -380,39 +449,15 @@ static void *worker(void *args) {
                 perror ("epoll_wait(2)");
                 close(events[i].data.fd);
                 continue;
-            }
-            if (events[i].data.fd == global.run) {
+            } else if (events[i].data.fd == global.run) {
+                /* And quit event after that */
                 eventfd_t val;
                 eventfd_read(global.run, &val);
                 DEBUG("Stopping epoll loop. Exiting.\n\n");
                 break;
-            } else if (events[i].data.fd == fds->serversock) {
-                if (accept_connection(fds->epollfd, events[i].data.fd) == -1) {
-                    fprintf(stderr, "Error accepting new client: %s\n",
-                            strerror(errno));
-                }
-                // Rearm descriptor server socket on EPOLLIN
-                set_epollin(fds->epollfd, fds->serversock);
-            } else if (events[i].events & EPOLLIN) {
-                if (handle_request(fds->epollfd, events[i].data.fd) == -1) {
-                    fprintf(stderr, "Error handling request: %s\n",
-                            strerror(errno));
-                    /* Clean up all channels if the client was subscribed */
-                    map_iterate2(global.channels, close_socket, NULL);
-                    close(events[i].data.fd);
-                }
-            } else if (events[i].events & EPOLLOUT) {
-
-                reply_t *reply = (reply_t *) events[i].data.ptr;
-                if (reply_data(reply) == -1) {
-                    perror("Error replying data");
-                }
-                // Rearm descriptor on EPOLLIN
-                set_epollin(fds->epollfd, reply->fd);
-                // Clean up reply
-                if (reply->type == DATA_REPLY)
-                    free_reply(reply);
-                free(reply);
+            } else {
+                /* Finally handle the request according to its type */
+                ((client_t *) events[i].data.ptr)->ctx_handler(fds->epollfd, events[i].data.ptr);
             }
         }
     }
@@ -460,6 +505,19 @@ static int destroy_channels(void *t1, void *t2) {
 }
 
 
+static int destroy_clients(void *t1, void *t2) {
+    map_entry *kv = (map_entry *) t2;
+    if (kv) {
+        if (kv->val) {
+            client_t *c = (client_t *) kv->val;
+            free(c->id);
+            free(c->reply);
+        }
+    } else return MAP_ERR;
+    return MAP_OK;
+}
+
+
 /*
  * Main entry point for start listening on a socket and running an epoll event
  * loop his main responsibility is to pass incoming client connections
@@ -472,6 +530,7 @@ int start_server(void) {
     global.run = eventfd(0, EFD_NONBLOCK);
     global.channels = map_create();
     global.ack_waiting = map_create();
+    global.clients = map_create();
     global.next_id = init_counter();  // counter to get message id, should be enclosed inside locks
     pthread_mutex_init(&(global.lock), NULL);
     int epollfd;
@@ -486,10 +545,11 @@ int start_server(void) {
     int fd = make_listen("127.0.0.1", "9090");
 
     /* Add eventfd to the loop */
-    add_epollin(epollfd, global.run);
+    add_epoll(epollfd, global.run, NULL);
 
+    client_t server = { ONLINE, fd, accept_conn, "server", NULL };
     /* Set socket in EPOLLIN flag mode, ready to read data */
-    add_epollin(epollfd, fd);
+    add_epoll(epollfd, fd, &server);
 
     /* Worker thread pool */
     pthread_t workers[EPOLL_WORKERS];
@@ -512,6 +572,7 @@ int start_server(void) {
     free(global.next_id);
     map_iterate2(global.channels, destroy_queue_data, NULL);
     map_iterate2(global.channels, destroy_channels, NULL);
+    map_iterate2(global.clients, destroy_clients, NULL);
     /* map_release(global.channels); */
     return 0;
 }

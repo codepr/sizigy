@@ -50,7 +50,7 @@ int handle_request(int epollfd, int fd) {
     ringbuf_free(rbuf);
     free(p);
 
-    set_epollin(epollfd, fd);
+    mod_epoll(epollfd, fd, EPOLLIN, NULL);
 
     return 0;
 }
@@ -95,7 +95,7 @@ int main(int argc, char **argv) {
     /* Connect to the broker*/
     int connfd = make_connection("127.0.0.1", 9090);
     set_nonblocking(connfd);
-    add_epollin(epollfd, connfd);
+    add_epoll(epollfd, connfd, NULL);
     ssize_t n;
     /* Create a protocol formatted packet to subscribe to a channel */
     protocol_packet_t *sub_packet = create_sys_subpacket(SUBSCRIBE_CHANNEL, 0, 0, "test01");

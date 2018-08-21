@@ -8,6 +8,13 @@
 #define ERR_UNKNOWN   0x64
 #define ERR_MISS_CHAN 0x65
 #define ERR_MISS_MEX  0x66
+#define ERR_MISS_ID   0x67
+
+
+struct handshake {
+    uint8_t clean_session;
+    char *id;
+};
 
 
 struct build {
@@ -29,6 +36,7 @@ typedef struct {
     union {
         struct build *b;
         struct action *a;
+        struct handshake *h;
     } cmd;
 } command_t;
 

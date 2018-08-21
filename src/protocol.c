@@ -7,6 +7,34 @@
 #include "util.h"
 
 
+static struct handshake_packet *unpack_handshake_packet(uint8_t *bytes) {
+    uint8_t *meta = bytes;
+    uint8_t *clean_session = meta + sizeof(uint32_t);
+    // Move index after data field length and type (for now) to obtain operation code position
+    uint8_t *data = clean_session + sizeof(uint8_t);
+    // build up the protocol packet
+    struct handshake_packet *packet = malloc(sizeof(struct handshake_packet));
+    if (!packet) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+    // unpack all bytes into the structure
+    ssize_t data_len = *((uint32_t *) meta);
+    packet->clean_session = *clean_session;
+
+    packet->id = malloc((data_len + 1));
+
+    if (!packet->id) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memcpy(packet->id, data, data_len);
+    packet->id[data_len] = '\0';
+    return packet;
+}
+
+
 static packed_t *pack_sub_packet(struct sub_packet *packet) {
     ssize_t dlen = strlen((char *) packet->channel_name);
     uint32_t tlen = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(int64_t) + dlen;
@@ -352,6 +380,12 @@ int8_t unpack(uint8_t *bytes, protocol_packet_t *packet) {
 
             memcpy(packet->payload.data, data, data_len);
             packet->payload.data[data_len] = '\0';
+            break;
+        case HANDSHAKE:
+            type = bytes + sizeof(uint32_t) + sizeof(uint8_t);
+            data = type + sizeof(uint8_t);
+            packet->type = *type;
+            packet->payload.handshake_packet = unpack_handshake_packet(data);
             break;
         case SUBSCRIBE_CHANNEL:
             type = bytes + sizeof(uint32_t) + sizeof(uint8_t);

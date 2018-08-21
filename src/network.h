@@ -9,7 +9,9 @@
 #define ONEMB   1048576
 
 
+/* Initiate a connection to a remote host defined by a pair host:port */
 int make_connection(const char *, int);
+
 /* Set non-blocking socket */
 int set_nonblocking(int );
 
@@ -26,9 +28,8 @@ int make_listen(const char *, const char *);
 int accept_connection(int, int);
 
 /* Epoll management functions */
-void add_epollin(int, int);
-void set_epollout(int, int , void *);
-void set_epollin(int, int);
+void add_epoll(int, int, void *);
+void mod_epoll(int, int, int, void *);
 
 /* I/O management functions */
 int sendall(int, uint8_t *, ssize_t *);

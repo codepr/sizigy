@@ -1,6 +1,7 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include <stdio.h>
 #include <stdint.h>
 
 
@@ -16,6 +17,7 @@ uint64_t incr_read(counter_t *);
 uint64_t read_counter(counter_t *);
 void remove_newline(char *);
 char *append_string(const char *, const char *);
+const char *random_name(size_t);
 
 /* logging */
 

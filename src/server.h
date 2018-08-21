@@ -14,10 +14,26 @@
 #define E_UNKNOWN   "ERR: Unknown command\n"
 #define E_MISS_CHAN "ERR: Missing channel name\n"
 #define E_MISS_MEX  "ERR: Missing message to publish\n"
+#define E_MISS_ID   "ERR: Missing ID and clean session set to True\n"
 
 #define TIMEOUT      60
 
 enum REPLY_TYPE { NO_REPLY, ACK_REPLY, NACK_REPLY, DATA_REPLY, PING_REPLY };
+
+enum STATUS { ONLINE, OFFLINE };
+
+
+typedef struct client client_t;
+
+typedef struct reply reply_t;
+
+struct client {
+    uint8_t status;
+    int fd;
+    int (*ctx_handler)(int, client_t *);
+    char *id;
+    reply_t *reply;
+};
 
 
 struct socks {
@@ -26,13 +42,13 @@ struct socks {
 };
 
 
-typedef struct {
+struct reply {
     uint8_t type;
     uint8_t qos;
     int fd;
     char *data;
     char *channel;
-} reply_t;
+};
 
 
 struct global {
@@ -46,6 +62,8 @@ struct global {
     map_t *channels;
     /* ACK awaiting mapping fds (Unused) */
     map_t *ack_waiting;
+    /* Tracking clients */
+    map_t *clients;
     /* Global lock to avoid race conditions on critical shared parts */
     pthread_mutex_t lock;
 };

@@ -27,6 +27,13 @@
 #define AT_LEAST_ONCE 0x01
 
 
+/* Handshake packet, needed to set an ID to a client and making it capable of
+   reconnecting with existing sessions */
+struct handshake_packet {
+    uint8_t clean_session;
+    char *id;
+};
+
 /* Subscription packet from client, qos and offset are optional and fallback
    respectively to 0 and -1 */
 struct sub_packet {
@@ -63,6 +70,7 @@ typedef struct {
         struct sub_packet *sub_packet;
         struct sys_pubpacket *sys_pubpacket;
         struct cli_pubpacket *cli_pubpacket;
+        struct handshake_packet *handshake_packet;
         uint8_t *data;
     } payload;
 } protocol_packet_t;

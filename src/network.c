@@ -150,10 +150,7 @@ int accept_connection(int epollfd, int serversock) {
 
     DEBUG("*** Client connection from %s\n", ip_buff);
 
-    // add to EPOLLIN client sock
-    add_epollin(epollfd, clientsock);
-
-    return 0;
+    return clientsock;
 }
 
 
@@ -209,9 +206,11 @@ int recvall(int sfd, ringbuf_t *ringbuf, ssize_t len) {
 }
 
 
-void add_epollin(int efd, int fd) {
+void add_epoll(int efd, int fd, void *data) {
     struct epoll_event ev;
     ev.data.fd = fd;
+    if (data)
+        ev.data.ptr = data;
     ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
 
     if (epoll_ctl(efd, EPOLL_CTL_ADD, fd, &ev) < 0) {
@@ -220,24 +219,13 @@ void add_epollin(int efd, int fd) {
 }
 
 
-void set_epollout(int efd, int fd, void *data) {
+void mod_epoll(int efd, int fd, int evs, void *data) {
     struct epoll_event ev;
     if (data)
         ev.data.ptr = data;
-    ev.events = EPOLLOUT | EPOLLET | EPOLLONESHOT;
+    ev.events = evs | EPOLLET | EPOLLONESHOT;
 
     if (epoll_ctl(efd, EPOLL_CTL_MOD, fd, &ev) < 0) {
         perror("epoll_ctl(2): set epollout");
-    }
-}
-
-
-void set_epollin(int efd, int fd) {
-    struct epoll_event ev;
-    ev.data.fd = fd;
-    ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
-
-    if (epoll_ctl(efd, EPOLL_CTL_MOD, fd, &ev) < 0) {
-        perror("epoll_ctl(2): set epollin");
     }
 }

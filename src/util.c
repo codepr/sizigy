@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -17,26 +16,19 @@ void remove_newline(char *str) {
 }
 
 
-char* append_string(const char *s1, const char *s2) {
+char *append_string(const char *s1, const char *s2) {
     const size_t len1 = strlen(s1);
     const size_t len2 = strlen(s2);
     char *result = malloc(len1 + len2 + 1); // +1 for the null-terminator
+    if (!result) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
     // in real code you would check for errors in malloc here
     memcpy(result, s1, len1);
     memcpy(result + len1, s2, len2 + 1); // +1 to copy the null-terminator
     return result;
 }
-
-/* char *append_string(const char *str, const char *token) { */
-/*     size_t len = strlen(str) + strlen(token); */
-/*     char *ret = malloc(len * sizeof(char) + 1); */
-/*     if (!ret) { */
-/*         perror("malloc(3) failed"); */
-/*         exit(EXIT_FAILURE); */
-/*     } */
-/*     *ret = '\0'; */
-/*     return strcat(strcat(ret, str), token); */
-/* } */
 
 
 counter_t *init_counter(void) {
@@ -74,6 +66,24 @@ uint64_t read_counter(counter_t *c) {
     pthread_mutex_unlock(&c->lock);
     return rc;
 }
+
+
+const char *random_name(size_t len) {
+    char *pool = "abcdefghijklmnopqrstwxyz0123456789";
+    /* Length of the string */
+    int i = 0;
+
+    char *node_name = malloc(len + 1);
+    node_name[len] = '\0';
+
+    /* build name using random positions in the poll */
+    while(len--) {
+        node_name[i++] = pool[(rand() % strlen(pool))];
+    }
+
+    return node_name;
+}
+
 
 
 void s_log(uint8_t level, const char *info, ...) {
