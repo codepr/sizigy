@@ -14,7 +14,7 @@
 
 
 /* Set non-blocking socket */
-int set_nonblocking(int fd) {
+int set_nonblocking(const int fd) {
     int flags, result;
     flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) {
@@ -97,7 +97,7 @@ int make_listen(const char *host, const char *port) {
 /*
  * Create a socket and use it to connect to the specified host and port
  */
-int make_connection(const char *host, int port) {
+int make_connection(const char *host, const int port) {
 
     struct sockaddr_in serveraddr;
     struct hostent *server;
@@ -131,7 +131,7 @@ int make_connection(const char *host, int port) {
 }
 
 
-int accept_connection(int epollfd, int serversock) {
+int accept_connection(const int serversock) {
 
     int clientsock;
     struct sockaddr_in addr;
@@ -155,7 +155,7 @@ int accept_connection(int epollfd, int serversock) {
 
 
 
-int sendall(int sfd, uint8_t *buf, ssize_t *len) {
+int sendall(const int sfd, uint8_t *buf, ssize_t *len) {
     int total = 0;
     ssize_t bytesleft = *len;
     int n = 0;
@@ -177,7 +177,7 @@ int sendall(int sfd, uint8_t *buf, ssize_t *len) {
 }
 
 
-int recvall(int sfd, ringbuf_t *ringbuf, ssize_t len) {
+int recvall(const int sfd, ringbuf_t *ringbuf, ssize_t len) {
     int n = 0;
     int total = 0;
     int bufsize = 256;
@@ -206,7 +206,7 @@ int recvall(int sfd, ringbuf_t *ringbuf, ssize_t len) {
 }
 
 
-void add_epoll(int efd, int fd, void *data) {
+void add_epoll(const int efd, const int fd, void *data) {
     struct epoll_event ev;
     ev.data.fd = fd;
     if (data)
@@ -219,7 +219,7 @@ void add_epoll(int efd, int fd, void *data) {
 }
 
 
-void mod_epoll(int efd, int fd, int evs, void *data) {
+void mod_epoll(const int efd, const int fd, const int evs, void *data) {
     struct epoll_event ev;
     if (data)
         ev.data.ptr = data;

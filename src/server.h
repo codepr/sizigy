@@ -6,6 +6,9 @@
 #include <pthread.h>
 #include "map.h"
 #include "util.h"
+#include "parser.h"
+#include "ringbuf.h"
+
 
 #define EPOLL_WORKERS 4
 #define MAX_EVENTS	  64
@@ -51,6 +54,12 @@ struct reply {
 };
 
 
+struct command {
+    int ctype;
+    int (*handler)(client_t *, command_t *cmd);
+};
+
+
 struct global {
     /* Eventfd to break the epoll_wait loop in case of signals */
     uint8_t run;
@@ -72,6 +81,7 @@ struct global {
 extern struct global global;
 
 
+int parse_header(ringbuf_t *, char *);
 int start_server();
 
 #endif

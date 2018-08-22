@@ -64,8 +64,8 @@ int publish_message(channel_t *chan, uint8_t qos, void *message) {
     if (qos_mod)
         pp->payload.sys_pubpacket->qos = AT_MOST_ONCE;
 
-    DEBUG("*** PUBLISH (id=%ld qos=%d redelivered=%d message=%s) on channel %s (%ld bytes)\n",
-            id, qos, duplicate, (char *) message, chan->name, p->size);
+    DEBUG("*** PUBLISH bytes=%ld channel=%s id=%ld qos=%d redelivered=%d message=%s\n",
+            p->size, chan->name, id, qos, duplicate, (char *) message);
 
     /* Add message to the queue_t associated to the channel */
     enqueue(chan->messages, pp);
@@ -89,6 +89,7 @@ int publish_message(channel_t *chan, uint8_t qos, void *message) {
                 goto cleanup;
             }
         }
+        DEBUG(">>> Publishing to %s\n", sub->name);
         cursor = cursor->next;
     }
 cleanup:

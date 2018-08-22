@@ -103,7 +103,13 @@ void s_log(uint8_t level, const char *info, ...) {
         content[totlen - 1] = '\0';
         strncat(content, time_buff, totlen - strlen(content) - 1);
         strncat(content, info, totlen - strlen(content) - 1);
-        vfprintf(stdout, content, argptr);
+        char buf[200];
+        vsnprintf(buf, 199, info, argptr);
+        if (strlen(buf) > 160) {
+            strncpy(buf + 152, " ...\n", 6);
+            buf[159] = '\0';
+        }
+        printf("%s", buf);
         va_end(argptr);
     }
 }

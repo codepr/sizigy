@@ -31,7 +31,7 @@
    reconnecting with existing sessions */
 struct handshake_packet {
     uint8_t clean_session;
-    char *id;
+    uint8_t *id;
 };
 
 /* Subscription packet from client, qos and offset are optional and fallback

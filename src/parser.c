@@ -37,11 +37,13 @@ command_t *parse_command(protocol_packet_t *packet) {
             if (packet->payload.handshake_packet->clean_session == 0 && !packet->payload.handshake_packet->id)
                 comm->opcode = ERR_MISS_ID;
             else {
-                comm->cmd.h->clean_session = packet->payload.handshake_packet->clean_session;
+                struct handshake *hp = malloc(sizeof(struct handshake));
+                hp->clean_session = packet->payload.handshake_packet->clean_session;
                 if (!packet->payload.handshake_packet->id)
-                    comm->cmd.h->id = (char *) random_name(8);
+                    hp->id = (char *) random_name(8);
                 else
-                    comm->cmd.h->id = strdup(packet->payload.handshake_packet->id);
+                    hp->id = (char *) strdup((char *) packet->payload.handshake_packet->id);
+                comm->cmd.h = hp;
                 free(packet->payload.handshake_packet->id);
                 free(packet->payload.handshake_packet);
             }

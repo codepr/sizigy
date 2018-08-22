@@ -25,16 +25,8 @@
 
 struct global global;
 
-static int reply_data(int, client_t *);
-static int handle_request(int, client_t *);
-
-
-static void free_reply(reply_t *reply) {
-    if (reply->data)
-        free(reply->data);
-    if (reply->channel)
-        free(reply->channel);
-}
+static int reply_handler(const int, client_t *);
+static int request_handler(const int, client_t *);
 
 
 static int send_data(void *arg1, void *ptr) {
@@ -54,6 +46,260 @@ static int send_data(void *arg1, void *ptr) {
 }
 
 
+static int err_handler(client_t *c, const uint8_t errcode) {
+    c->reply->type = NACK_REPLY;
+    if (errcode == ERR_UNKNOWN) {
+        DEBUG("*** %s", E_UNKNOWN);
+        c->reply->data = E_UNKNOWN;
+    }
+    else if (errcode == ERR_MISS_CHAN) {
+        DEBUG("*** %s", E_MISS_CHAN);
+        c->reply->data = E_MISS_CHAN;
+    }
+    else if (errcode == ERR_MISS_MEX) {
+        DEBUG("*** %s", E_MISS_MEX);
+        c->reply->data = E_MISS_MEX;
+    }
+    else if (errcode == ERR_MISS_ID) {
+        DEBUG("*** %s", E_MISS_ID);
+        c->reply->data = E_MISS_ID;
+    }
+    else {
+        DEBUG("*** %s", E_UNKNOWN);
+        c->reply->data = E_UNKNOWN;
+    }
+    return -1;
+}
+
+
+static int ack_handler(client_t *c, command_t *cmd) {
+    c->reply = NULL;
+    uint64_t id = 0;
+    /* Extract uint64_t ID from the payload */
+    char *id_str = cmd->cmd.b->channel_name;
+    while (*id_str != '\0') {
+        id = (id * 10) + (*id_str - '0');
+        id_str++;
+    }
+    DEBUG("*** ACK from %s for packet id %ld\n", c->id, id);
+    /* Remove packet from ACK waiting map_t */
+    map_del(global.ack_waiting, &id);
+
+    return -1;
+}
+
+
+static int quit_handler(client_t *c, command_t *cmd) {
+    DEBUG("*** QUIT\n");
+    shutdown(c->fd, 0);
+    close(c->fd);
+    return -1;
+}
+
+
+static int ping_handler(client_t *c, command_t *cmd) {
+    c->reply = malloc(sizeof(reply_t));
+
+    if (!c->reply) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
+    c->reply->type = ACK_REPLY;
+    c->reply->fd = c->fd;
+    c->reply->data = OK;       // placeholder reply
+    c->reply->qos = cmd->qos;
+
+    c->reply->data = "PONG\n";
+    c->reply->type = PING_REPLY;
+    DEBUG("*** PING from %s\n", c->id);
+
+    return 0;
+}
+
+
+static int handshake_handler(client_t *c, command_t *cmd) {
+    c->reply = malloc(sizeof(reply_t));
+
+    if (!c->reply) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
+    c->reply->type = ACK_REPLY;
+    c->reply->fd = c->fd;
+    c->reply->data = OK;       // placeholder reply
+    c->reply->qos = cmd->qos;
+
+    char *id = append_string("C:", cmd->cmd.h->id);
+    if (cmd->cmd.h->clean_session == 1) {
+        map_del(global.clients, c->id);
+        map_put(global.clients, id, c);
+        free(c->id);
+        c->id = id;
+    } else {
+        /* Should check if global map contains an entry and return an
+           error code in case of failure, for now we just add the new
+           client */
+        map_put(global.clients, id, c);
+    }
+
+    return 0;
+}
+
+
+static int create_channel_handler(client_t *c, command_t *cmd) {
+    c->reply = malloc(sizeof(reply_t));
+
+    if (!c->reply) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
+    c->reply->type = ACK_REPLY;
+    c->reply->fd = c->fd;
+    c->reply->data = OK;       // placeholder reply
+    c->reply->qos = cmd->qos;
+
+    DEBUG("*** CREATE %s\n", cmd->cmd.b->channel_name);
+    channel_t *channel = create_channel(cmd->cmd.b->channel_name);
+    map_put(global.channels, cmd->cmd.b->channel_name, channel);
+
+    return 0;
+}
+
+
+static int delete_channel_handler(client_t *c, command_t *cmd) {
+    c->reply = malloc(sizeof(reply_t));
+
+    if (!c->reply) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
+    c->reply->type = ACK_REPLY;
+    c->reply->fd = c->fd;
+    c->reply->data = OK;       // placeholder reply
+    c->reply->qos = cmd->qos;
+
+    DEBUG("*** DELETE %s\n", cmd->cmd.b->channel_name);
+    void *raw_chan = map_get(global.channels, cmd->cmd.b->channel_name);
+    if (raw_chan) {
+        channel_t *chan = (channel_t *) raw_chan;
+        destroy_channel(chan);
+    }
+    map_del(global.channels, cmd->cmd.b->channel_name);
+
+    return 0;
+}
+
+
+static int publish_message_handler(client_t *c, command_t *cmd) {
+    c->reply = malloc(sizeof(reply_t));
+
+    if (!c->reply) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
+    c->reply->fd = c->fd;
+    c->reply->qos = cmd->qos;
+    c->reply->data = strdup(cmd->cmd.a->message);
+    c->reply->channel = strdup(cmd->cmd.a->channel_name);
+    c->reply->type = DATA_REPLY;
+
+    return 1;
+}
+
+
+static int subscribe_channel_handler(client_t *c, command_t *cmd) {
+    c->reply = malloc(sizeof(reply_t));
+
+    if (!c->reply) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
+    c->reply->type = ACK_REPLY;
+    c->reply->fd = c->fd;
+    c->reply->data = OK;       // placeholder reply
+    c->reply->qos = cmd->qos;
+
+    DEBUG("*** SUBSCRIBE %s\n", cmd->cmd.b->channel_name);
+    void *raw = map_get(global.channels, cmd->cmd.b->channel_name);
+    if (!raw) {
+        channel_t *channel = create_channel(cmd->cmd.b->channel_name);
+        map_put(global.channels, strdup(cmd->cmd.b->channel_name), channel);
+    }
+    channel_t *chan = (channel_t *) map_get(global.channels, cmd->cmd.b->channel_name);
+    struct subscriber *sub = malloc(sizeof(struct subscriber));
+    if (!sub) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+    sub->fd = c->fd;
+    sub->name = c->id;
+    sub->qos = cmd->qos;
+    sub->offset = cmd->cmd.b->offset;
+    add_subscriber(chan, sub);
+    send_queue(chan->messages, sub, send_data);
+
+    return 0;
+}
+
+
+static int unsubscribe_channel_handler(client_t *c, command_t *cmd) {
+    c->reply = malloc(sizeof(reply_t));
+
+    if (!c->reply) {
+        perror("malloc(3) failed");
+        exit(EXIT_FAILURE);
+    }
+
+    c->reply->type = ACK_REPLY;
+    c->reply->fd = c->fd;
+    c->reply->data = OK;       // placeholder reply
+    c->reply->qos = cmd->qos;
+
+    DEBUG("*** UNSUBSCRIBE %s\n", cmd->cmd.b->channel_name);
+    void *raw_chan = map_get(global.channels, cmd->cmd.b->channel_name);
+    if (raw_chan) {
+        channel_t *chan = (channel_t *) raw_chan;
+        // XXX basic placeholder subscriber
+        struct subscriber sub = { c->fd, AT_MOST_ONCE, 0, c->id };
+        del_subscriber(chan, &sub);
+    }
+
+    return 0;
+}
+
+
+static struct command commands[] = {
+    {ACK, ack_handler},
+    {QUIT, quit_handler},
+    {PING, ping_handler},
+    {HANDSHAKE, handshake_handler},
+    {CREATE_CHANNEL, create_channel_handler},
+    {DELETE_CHANNEL, delete_channel_handler},
+    {PUBLISH_MESSAGE, publish_message_handler},
+    {SUBSCRIBE_CHANNEL, subscribe_channel_handler},
+    {UNSUBSCRIBE_CHANNEL, unsubscribe_channel_handler}
+};
+
+
+int commands_len(void) {
+    return sizeof(commands) / sizeof(struct command);
+}
+
+
+static void free_reply(reply_t *reply) {
+    if (reply->data)
+        free(reply->data);
+    if (reply->channel)
+        free(reply->channel);
+}
+
+
 /* static int close_socket(void *arg1, void *arg2) { */
 /*     int fd = *(int *) arg1; */
 /*     map_entry *kv = (map_entry *) arg2; */
@@ -64,38 +310,9 @@ static int send_data(void *arg1, void *ptr) {
 /* } */
 
 
-static uint32_t parse_header(ringbuf_t *rbuf, char *bytearray) {
-    /* Check the size of the ring buffer, we need at least the first 4 bytes in
-       order to get the total length of the packet */
-    if (ringbuf_empty(rbuf) || ringbuf_size(rbuf) < sizeof(uint32_t))
-        return -1;
+static int request_handler(const int epollfd, client_t *client) {
+    const int clientfd = client->fd;
 
-    uint8_t *tmp = (uint8_t *) bytearray;
-
-    /* Try to read at least length of the packet */
-    for (uint8_t i = 0; i < sizeof(uint32_t); i++)
-        ringbuf_pop(rbuf, tmp++);
-
-    uint8_t *tot = (uint8_t *) bytearray;
-    uint32_t tlen = *((uint32_t *) tot);
-
-    /* If there's no bytes nr equal to the total size of the packet abort and
-       read again */
-    if (ringbuf_size(rbuf) < tlen - sizeof(uint32_t))
-        return tlen - sizeof(uint32_t) - ringbuf_size(rbuf);
-
-    /* Empty the rest of the ring buffer */
-    while ((tlen - sizeof(uint32_t)) > 0) {
-        ringbuf_pop(rbuf, tmp++);
-        --tlen;
-    }
-
-    return 0;
-}
-
-
-static int handle_request(int epollfd, client_t *client) {
-    int clientfd = client->fd;
     /* Buffer to initialize the ring buffer, used to handle input from client */
     uint8_t buffer[ONEMB * 2];
 
@@ -117,7 +334,7 @@ static int handle_request(int epollfd, client_t *client) {
     }
 
     /* Read all data to form a packet flag */
-    int8_t read_all = -1;
+    int read_all = -1;
     ssize_t n;
     protocol_packet_t *p = malloc(sizeof(protocol_packet_t));
 
@@ -163,148 +380,34 @@ static int handle_request(int epollfd, client_t *client) {
     /* Parse command according to the communication protocol */
     command_t *comm = parse_command(p);
 
-    pthread_mutex_unlock(&(global.lock));
+    int free_reply = -1;
+    int executed = 0;
 
-    reply_t *reply = malloc(sizeof(reply_t));
-
-    if (!reply) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
+    // Loop through commands array to find the correct handler
+    for (int i = 0; i < commands_len(); i++) {
+        if (commands[i].ctype == comm->opcode) {
+            free_reply = commands[i].handler(client, comm);
+            executed = 1;
+        }
+    }
+    // If no handler is found, it must be an error case
+    if (executed == 0) {
+        free_reply = err_handler(client, comm->opcode);
     }
 
-    reply->type = ACK_REPLY;
-    reply->fd = clientfd;
-    reply->data = OK;       // placeholder reply
-    reply->qos = comm->qos;
-    void *raw_chan = NULL;  // placeholder for map_get
-    char *id = NULL;
+    // Set reply handler as the current context handler
+    client->ctx_handler = reply_handler;
 
-    switch (comm->opcode) {
-        case CREATE_CHANNEL:
-            DEBUG("*** CREATE %s\n", comm->cmd.b->channel_name);
-            channel_t *channel = create_channel(comm->cmd.b->channel_name);
-            map_put(global.channels, comm->cmd.b->channel_name, channel);
-            break;
-        case DELETE_CHANNEL:
-            DEBUG("*** DELETE %s\n", comm->cmd.b->channel_name);
-            raw_chan = map_get(global.channels, comm->cmd.b->channel_name);
-            if (raw_chan) {
-                channel_t *chan = (channel_t *) raw_chan;
-                destroy_channel(chan);
-            }
-            map_del(global.channels, comm->cmd.b->channel_name);
-            break;
-        case HANDSHAKE:
-            id = append_string("C:", comm->cmd.h->id);
-            if (comm->cmd.h->clean_session == 1) {
-                map_del(global.clients, client->id);
-                map_put(global.clients, id, client);
-            } else
-                // Should check if global map contains an entry and return an
-                // error code in case of failure, for now we just add the new
-                // client
-                map_put(global.clients, id, client);
-            free(comm->cmd.h->id);
-            break;
-        case SUBSCRIBE_CHANNEL:
-            DEBUG("*** SUBSCRIBE %s\n", comm->cmd.b->channel_name);
-            void *raw = map_get(global.channels, comm->cmd.b->channel_name);
-            if (!raw) {
-                channel_t *channel = create_channel(comm->cmd.b->channel_name);
-                map_put(global.channels, strdup(comm->cmd.b->channel_name), channel);
-            }
-            channel_t *chan = (channel_t *) map_get(global.channels, comm->cmd.b->channel_name);
-            struct subscriber *sub = malloc(sizeof(struct subscriber));
-            if (!sub) {
-                perror("malloc(3) failed");
-                exit(EXIT_FAILURE);
-            }
-            sub->fd = clientfd;
-            sub->name = "sub";
-            sub->qos = comm->qos;
-            sub->offset = comm->cmd.b->offset;
-            add_subscriber(chan, sub);
-            send_queue(chan->messages, sub, send_data);
-            break;
-        case UNSUBSCRIBE_CHANNEL:
-            DEBUG("*** UNSUBSCRIBE %s\n", comm->cmd.b->channel_name);
-            raw_chan = map_get(global.channels, comm->cmd.b->channel_name);
-            if (raw_chan) {
-                channel_t *chan = (channel_t *) raw_chan;
-                // XXX basic placeholder subscriber
-                struct subscriber sub = { clientfd, AT_MOST_ONCE, 0, "sub" };
-                del_subscriber(chan, &sub);
-            }
-            break;
-        case PUBLISH_MESSAGE:
-            reply->data = strdup(comm->cmd.a->message);
-            reply->channel = strdup(comm->cmd.a->channel_name);
-            reply->type = DATA_REPLY;
-            break;
-        case PING:
-            reply->data = "PONG\n";
-            reply->type = PING_REPLY;
-            DEBUG("*** PING from %s\n", ip_buff);
-            break;
-        case ACK:
-            reply->type = NO_REPLY;
-            uint64_t id = 0;
-            /* Extract uint64_t ID from the payload */
-            char *id_str = comm->cmd.b->channel_name;
-            while (*id_str != '\0') {
-                id = (id * 10) + (*id_str - '0');
-                id_str++;
-            }
-            DEBUG("*** ACK from %s for packet id %ld\n", ip_buff, id);
-            /* Remove packet from ACK waiting map_t */
-            map_del(global.ack_waiting, &id);
-            break;
-        case ERR_UNKNOWN:
-            DEBUG("*** %s", E_UNKNOWN);
-            reply->type = NACK_REPLY;
-            reply->data = E_UNKNOWN;
-            break;
-        case ERR_MISS_CHAN:
-            DEBUG("*** %s", E_MISS_CHAN);
-            reply->type = NACK_REPLY;
-            reply->data = E_MISS_CHAN;
-            break;
-        case ERR_MISS_MEX:
-            DEBUG("*** %s", E_MISS_MEX);
-            reply->type = NACK_REPLY;
-            reply->data = E_MISS_MEX;
-            break;
-        case ERR_MISS_ID:
-            DEBUG("*** %s", E_MISS_ID);
-            reply->type = NACK_REPLY;
-            reply->data = E_MISS_ID;
-            break;
-        case QUIT:
-            DEBUG("*** QUIT\n");
-            // XXX hacky
-            free(client->reply);
-            free(client);
-            shutdown(clientfd, 0);
-            close(clientfd);
-            break;
-        default:
-            reply->type = NACK_REPLY;
-            reply->data = E_UNKNOWN;
-            DEBUG("*** %s", E_UNKNOWN);
-            break;
-    }
-
-    pthread_mutex_lock(&(global.lock));
-
-    client->reply = reply;
-    client->ctx_handler = reply_data;
-
-    if (reply->type != NO_REPLY)
+    // Clean up garbage
+    if (comm->opcode != ACK) {
         mod_epoll(epollfd, clientfd, EPOLLOUT, client);
-    else {
-        client->ctx_handler = handle_request;
+    } else {
+        client->ctx_handler = request_handler;
         mod_epoll(epollfd, clientfd, EPOLLIN, client);
-        free(reply);
+        if (free_reply > -1 && client->reply) {
+            free(client->reply);
+            client->reply = NULL;
+        }
     }
 
     pthread_mutex_unlock(&global.lock);
@@ -327,17 +430,22 @@ static int handle_request(int epollfd, client_t *client) {
             || p->opcode == DATA) {
         free(comm->cmd.b->channel_name);
         free(comm->cmd.b);
+    } else if (p->opcode == HANDSHAKE) {
+        free(comm->cmd.h->id);
+        free(comm->cmd.h);
     } else {
         free(p->payload.data);
     }
     free(comm);
+    comm = NULL;
     free(p);
+    p = NULL;
 
     return 0;
 }
 
 
-static int reply_data(int epollfd, client_t *client) {
+static int reply_handler(const int epollfd, client_t *client) {
     reply_t *reply = client->reply;
     int ret = 0;
     ssize_t sent;
@@ -393,18 +501,19 @@ static int reply_data(int epollfd, client_t *client) {
     if (reply->type == DATA_REPLY)
         free_reply(reply);
     free(reply);
+    reply = NULL;
 
     client->reply = NULL;
-    client->ctx_handler = handle_request;
+    client->ctx_handler = request_handler;
     mod_epoll(epollfd, client->fd, EPOLLIN, client);
     return ret;
 }
 
 
-static int accept_conn(int epollfd, client_t *client) {
-    int fd = client->fd;
+static int accept_handler(const int epollfd, client_t *client) {
+    const int fd = client->fd;
     /* Accept the connection */
-    int clientsock = accept_connection(epollfd, fd);
+    int clientsock = accept_connection(fd);
     /* Abort if not accepted */
     if (clientsock == -1)
         return -1;
@@ -412,7 +521,7 @@ static int accept_conn(int epollfd, client_t *client) {
     client_t *new_client = malloc(sizeof(client_t));
     new_client->status = ONLINE;
     new_client->fd = clientsock;
-    new_client->ctx_handler = handle_request;
+    new_client->ctx_handler = request_handler;
     const char *id = random_name(8);
     char *name = append_string("C:", id);  // C states that it is a client (could be another sizigy instance)
     free((void *) id);
@@ -510,12 +619,45 @@ static int destroy_clients(void *t1, void *t2) {
     if (kv) {
         if (kv->val) {
             client_t *c = (client_t *) kv->val;
-            free(c->id);
-            free(c->reply);
+            if (c->id)
+                free(c->id);
+            if (c->reply)
+                free(c->reply);
         }
     } else return MAP_ERR;
     return MAP_OK;
 }
+
+
+int parse_header(ringbuf_t *rbuf, char *bytearray) {
+    /* Check the size of the ring buffer, we need at least the first 4 bytes in
+       order to get the total length of the packet */
+    if (ringbuf_empty(rbuf) || ringbuf_size(rbuf) < sizeof(uint32_t))
+        return -1;
+
+    uint8_t *tmp = (uint8_t *) bytearray;
+
+    /* Try to read at least length of the packet */
+    for (uint8_t i = 0; i < sizeof(uint32_t); i++)
+        ringbuf_pop(rbuf, tmp++);
+
+    uint8_t *tot = (uint8_t *) bytearray;
+    uint32_t tlen = *((uint32_t *) tot);
+
+    /* If there's no bytes nr equal to the total size of the packet abort and
+       read again */
+    if (ringbuf_size(rbuf) < tlen - sizeof(uint32_t))
+        return tlen - sizeof(uint32_t) - ringbuf_size(rbuf);
+
+    /* Empty the rest of the ring buffer */
+    while ((tlen - sizeof(uint32_t)) > 0) {
+        ringbuf_pop(rbuf, tmp++);
+        --tlen;
+    }
+
+    return 0;
+}
+
 
 
 /*
@@ -533,21 +675,22 @@ int start_server(void) {
     global.clients = map_create();
     global.next_id = init_counter();  // counter to get message id, should be enclosed inside locks
     pthread_mutex_init(&(global.lock), NULL);
-    int epollfd;
 
     /* Initialize epollfd */
-    if ((epollfd = epoll_create1(0)) == -1) {
+    const int epollfd = epoll_create1(0);
+
+    if (epollfd == -1) {
         perror("epoll_create1");
         exit(EXIT_FAILURE);
     }
 
     /* Initialize the socket */
-    int fd = make_listen("127.0.0.1", "9090");
+    const int fd = make_listen("127.0.0.1", "9090");
 
     /* Add eventfd to the loop */
     add_epoll(epollfd, global.run, NULL);
 
-    client_t server = { ONLINE, fd, accept_conn, "server", NULL };
+    client_t server = { ONLINE, fd, accept_handler, "server", NULL };
     /* Set socket in EPOLLIN flag mode, ready to read data */
     add_epoll(epollfd, fd, &server);
 

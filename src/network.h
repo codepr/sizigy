@@ -10,10 +10,10 @@
 
 
 /* Initiate a connection to a remote host defined by a pair host:port */
-int make_connection(const char *, int);
+int make_connection(const char *, const int);
 
 /* Set non-blocking socket */
-int set_nonblocking(int );
+int set_nonblocking(const int );
 
 /* Auxiliary function for creating epoll server */
 int create_and_bind(const char *, const char *);
@@ -25,14 +25,14 @@ int create_and_bind(const char *, const char *);
 int make_listen(const char *, const char *);
 
 /* Accept a connection and add it to the right epollfd */
-int accept_connection(int, int);
+int accept_connection(const int);
 
 /* Epoll management functions */
-void add_epoll(int, int, void *);
-void mod_epoll(int, int, int, void *);
+void add_epoll(const int, const int, void *);
+void mod_epoll(const int, const int, const int, void *);
 
 /* I/O management functions */
-int sendall(int, uint8_t *, ssize_t *);
-int recvall(int, ringbuf_t *, ssize_t);
+int sendall(const int, uint8_t *, ssize_t *);
+int recvall(const int, ringbuf_t *, ssize_t);
 
 #endif
