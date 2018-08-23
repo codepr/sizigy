@@ -1,5 +1,6 @@
 CC=gcc
-CFLAGS=-ggdb -std=gnu99 -Wall -lrt -lpthread -O3 -pedantic -fsanitize=address -fno-omit-frame-pointer
+CFLAGS=-std=gnu11 -Wall -lrt -lpthread -O3 -pedantic
+DEBUGFLAGS=-ggdb -fsanitize=address -fno-omit-frame-pointer -fsanitize=undefined
 BIN=./bin
 SRC=src/map.c 		\
 	src/util.c		\
@@ -24,6 +25,9 @@ sizigysub: $(SUBSRC)
 
 sizigypub: $(SUBSRC)
 	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(SRC) src/sizigypub.c -o $(BIN)/sizigypub
+
+debug:
+	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(DEBUGFLAGS) $(SRC) src/main.c -o $(BIN)/sizigy
 
 clean:
 	rm -f $(BIN)/sizigy

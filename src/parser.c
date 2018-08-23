@@ -40,7 +40,7 @@ command_t *parse_command(protocol_packet_t *packet) {
                 struct handshake *hp = malloc(sizeof(struct handshake));
                 hp->clean_session = packet->payload.handshake_packet->clean_session;
                 if (!packet->payload.handshake_packet->id)
-                    hp->id = (char *) random_name(8);
+                    hp->id = (char *) random_name(16);
                 else
                     hp->id = (char *) strdup((char *) packet->payload.handshake_packet->id);
                 comm->cmd.h = hp;

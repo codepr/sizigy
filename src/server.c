@@ -36,7 +36,7 @@ static int send_data(void *arg1, void *ptr) {
     if (sub->qos > 0)
         pp->payload.sys_pubpacket->qos = 1;
     packed_t *p = pack(pp);
-    if (sendall(sub->fd, p->data, &p->size) < 0) {
+    if (sendall(sub->fd, p->data, p->size, &(ssize_t) {0}) < 0) {
         perror("send(2): error sending\n");
         return -1;
     }
@@ -49,23 +49,23 @@ static int send_data(void *arg1, void *ptr) {
 static int err_handler(client_t *c, const uint8_t errcode) {
     c->reply->type = NACK_REPLY;
     if (errcode == ERR_UNKNOWN) {
-        DEBUG("*** %s", E_UNKNOWN);
+        DEBUG("%s", E_UNKNOWN);
         c->reply->data = E_UNKNOWN;
     }
     else if (errcode == ERR_MISS_CHAN) {
-        DEBUG("*** %s", E_MISS_CHAN);
+        DEBUG("%s", E_MISS_CHAN);
         c->reply->data = E_MISS_CHAN;
     }
     else if (errcode == ERR_MISS_MEX) {
-        DEBUG("*** %s", E_MISS_MEX);
+        DEBUG("%s", E_MISS_MEX);
         c->reply->data = E_MISS_MEX;
     }
     else if (errcode == ERR_MISS_ID) {
-        DEBUG("*** %s", E_MISS_ID);
+        DEBUG("%s", E_MISS_ID);
         c->reply->data = E_MISS_ID;
     }
     else {
-        DEBUG("*** %s", E_UNKNOWN);
+        DEBUG("%s", E_UNKNOWN);
         c->reply->data = E_UNKNOWN;
     }
     return -1;
@@ -81,7 +81,7 @@ static int ack_handler(client_t *c, command_t *cmd) {
         id = (id * 10) + (*id_str - '0');
         id_str++;
     }
-    DEBUG("*** ACK from %s for packet id %ld\n", c->id, id);
+    DEBUG("ACK from %s (id=%ld)", c->id, id);
     /* Remove packet from ACK waiting map_t */
     map_del(global.ack_waiting, &id);
 
@@ -90,7 +90,7 @@ static int ack_handler(client_t *c, command_t *cmd) {
 
 
 static int quit_handler(client_t *c, command_t *cmd) {
-    DEBUG("*** QUIT\n");
+    DEBUG("QUIT");
     shutdown(c->fd, 0);
     close(c->fd);
     return -1;
@@ -112,7 +112,7 @@ static int ping_handler(client_t *c, command_t *cmd) {
 
     c->reply->data = "PONG\n";
     c->reply->type = PING_REPLY;
-    DEBUG("*** PING from %s\n", c->id);
+    DEBUG("PING from %s", c->id);
 
     return 0;
 }
@@ -161,7 +161,7 @@ static int create_channel_handler(client_t *c, command_t *cmd) {
     c->reply->data = OK;       // placeholder reply
     c->reply->qos = cmd->qos;
 
-    DEBUG("*** CREATE %s\n", cmd->cmd.b->channel_name);
+    DEBUG("CREATE %s", cmd->cmd.b->channel_name);
     channel_t *channel = create_channel(cmd->cmd.b->channel_name);
     map_put(global.channels, cmd->cmd.b->channel_name, channel);
 
@@ -182,7 +182,7 @@ static int delete_channel_handler(client_t *c, command_t *cmd) {
     c->reply->data = OK;       // placeholder reply
     c->reply->qos = cmd->qos;
 
-    DEBUG("*** DELETE %s\n", cmd->cmd.b->channel_name);
+    DEBUG("DELETE %s", cmd->cmd.b->channel_name);
     void *raw_chan = map_get(global.channels, cmd->cmd.b->channel_name);
     if (raw_chan) {
         channel_t *chan = (channel_t *) raw_chan;
@@ -225,7 +225,7 @@ static int subscribe_channel_handler(client_t *c, command_t *cmd) {
     c->reply->data = OK;       // placeholder reply
     c->reply->qos = cmd->qos;
 
-    DEBUG("*** SUBSCRIBE %s\n", cmd->cmd.b->channel_name);
+    DEBUG("SUBSCRIBE %s", cmd->cmd.b->channel_name);
     void *raw = map_get(global.channels, cmd->cmd.b->channel_name);
     if (!raw) {
         channel_t *channel = create_channel(cmd->cmd.b->channel_name);
@@ -244,6 +244,8 @@ static int subscribe_channel_handler(client_t *c, command_t *cmd) {
     add_subscriber(chan, sub);
     send_queue(chan->messages, sub, send_data);
 
+    list_head_insert(c->subscriptions, chan->name);
+
     return 0;
 }
 
@@ -261,7 +263,7 @@ static int unsubscribe_channel_handler(client_t *c, command_t *cmd) {
     c->reply->data = OK;       // placeholder reply
     c->reply->qos = cmd->qos;
 
-    DEBUG("*** UNSUBSCRIBE %s\n", cmd->cmd.b->channel_name);
+    DEBUG("UNSUBSCRIBE %s", cmd->cmd.b->channel_name);
     void *raw_chan = map_get(global.channels, cmd->cmd.b->channel_name);
     if (raw_chan) {
         channel_t *chan = (channel_t *) raw_chan;
@@ -269,6 +271,8 @@ static int unsubscribe_channel_handler(client_t *c, command_t *cmd) {
         struct subscriber sub = { c->fd, AT_MOST_ONCE, 0, c->id };
         del_subscriber(chan, &sub);
     }
+
+    // TODO remove subscriptions from client
 
     return 0;
 }
@@ -380,6 +384,9 @@ static int request_handler(const int epollfd, client_t *client) {
     /* Parse command according to the communication protocol */
     command_t *comm = parse_command(p);
 
+    pthread_mutex_unlock(&(global.lock));
+
+
     int free_reply = -1;
     int executed = 0;
 
@@ -394,6 +401,8 @@ static int request_handler(const int epollfd, client_t *client) {
     if (executed == 0) {
         free_reply = err_handler(client, comm->opcode);
     }
+
+    pthread_mutex_lock(&(global.lock));
 
     // Set reply handler as the current context handler
     client->ctx_handler = reply_handler;
@@ -410,7 +419,7 @@ static int request_handler(const int epollfd, client_t *client) {
         }
     }
 
-    pthread_mutex_unlock(&global.lock);
+    pthread_mutex_unlock(&(global.lock));
 
     if (p->opcode == PUBLISH_MESSAGE) {
         if (p->type == SYSTEM_PACKET) {
@@ -453,7 +462,7 @@ static int reply_handler(const int epollfd, client_t *client) {
     packed_t *p = pack(pp);
 
     if (reply->type == ACK_REPLY) {
-        if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
+        if ((sent = sendall(reply->fd, p->data, p->size, &(ssize_t) { 0 })) < 0) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
         }
@@ -463,7 +472,7 @@ static int reply_handler(const int epollfd, client_t *client) {
         free(p->data);
         free(p);
         p = pack(pp);
-        if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
+        if ((sent = sendall(reply->fd, p->data, p->size, &(ssize_t) { 0 })) < 0) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
         }
@@ -473,7 +482,7 @@ static int reply_handler(const int epollfd, client_t *client) {
         free(p->data);
         free(p);
         p = pack(pp);
-        if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
+        if ((sent = sendall(reply->fd, p->data, p->size, &(ssize_t) { 0 })) < 0) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
         }
@@ -481,7 +490,7 @@ static int reply_handler(const int epollfd, client_t *client) {
         // Ignore
     } else {
         // reply to original sender
-        if ((sent = sendall(reply->fd, p->data, &p->size)) < 0) {
+        if ((sent = sendall(reply->fd, p->data, p->size, &(ssize_t) { 0 })) < 0) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
         }
@@ -491,7 +500,11 @@ static int reply_handler(const int epollfd, client_t *client) {
             map_put(global.channels, strdup(reply->channel), channel);
         }
         channel_t *chan = (channel_t *) map_get(global.channels, reply->channel);
-        publish_message(chan, reply->qos, strdup(reply->data));
+        double tic = clock();
+        sent = publish_message(chan, reply->qos, strdup(reply->data), 0);
+        double elapsed = (clock() - tic) /CLOCKS_PER_SEC;
+        int load = (sent / elapsed);
+        set_value(global.throughput, load);
     }
 
     free(p->data);
@@ -501,7 +514,6 @@ static int reply_handler(const int epollfd, client_t *client) {
     if (reply->type == DATA_REPLY)
         free_reply(reply);
     free(reply);
-    reply = NULL;
 
     client->reply = NULL;
     client->ctx_handler = request_handler;
@@ -510,29 +522,30 @@ static int reply_handler(const int epollfd, client_t *client) {
 }
 
 
-static int accept_handler(const int epollfd, client_t *client) {
-    const int fd = client->fd;
+static int accept_handler(const int epollfd, client_t *server) {
+    const int fd = server->fd;
     /* Accept the connection */
     int clientsock = accept_connection(fd);
     /* Abort if not accepted */
     if (clientsock == -1)
         return -1;
-    /* Create a client structure to handle his context connection */
-    client_t *new_client = malloc(sizeof(client_t));
-    new_client->status = ONLINE;
-    new_client->fd = clientsock;
-    new_client->ctx_handler = request_handler;
-    const char *id = random_name(8);
+    /* Create a server structure to handle his context connection */
+    client_t *client = malloc(sizeof(client_t));
+    client->status = ONLINE;
+    client->fd = clientsock;
+    client->ctx_handler = request_handler;
+    const char *id = random_name(16);
     char *name = append_string("C:", id);  // C states that it is a client (could be another sizigy instance)
     free((void *) id);
-    new_client->id = name;
-    new_client->reply = NULL;
-    /* Add new accepted client to the global map */
-    map_put(global.clients, name, new_client);
+    client->id = name;
+    client->reply = NULL;
+    client->subscriptions = list_create();
+    /* Add new accepted server to the global map */
+    map_put(global.clients, name, client);
     /* Add it to the epoll loop */
-    add_epoll(epollfd, clientsock, new_client);
+    add_epoll(epollfd, clientsock, client);
     /* Rearm server fd to accept new connections */
-    mod_epoll(epollfd, fd, EPOLLIN, client);
+    mod_epoll(epollfd, fd, EPOLLIN, server);
     return 0;
 }
 
@@ -562,7 +575,7 @@ static void *worker(void *args) {
                 /* And quit event after that */
                 eventfd_t val;
                 eventfd_read(global.run, &val);
-                DEBUG("Stopping epoll loop. Exiting.\n\n");
+                DEBUG("Stopping epoll loop. Exiting.\n");
                 break;
             } else {
                 /* Finally handle the request according to its type */
@@ -623,6 +636,8 @@ static int destroy_clients(void *t1, void *t2) {
                 free(c->id);
             if (c->reply)
                 free(c->reply);
+            if (c->subscriptions)
+                free(c->subscriptions);
         }
     } else return MAP_ERR;
     return MAP_OK;
@@ -674,6 +689,8 @@ int start_server(void) {
     global.ack_waiting = map_create();
     global.clients = map_create();
     global.next_id = init_counter();  // counter to get message id, should be enclosed inside locks
+    global.throughput = init_atomic();
+    global.throttler = init_throttler();
     pthread_mutex_init(&(global.lock), NULL);
 
     /* Initialize epollfd */
@@ -690,7 +707,7 @@ int start_server(void) {
     /* Add eventfd to the loop */
     add_epoll(epollfd, global.run, NULL);
 
-    client_t server = { ONLINE, fd, accept_handler, "server", NULL };
+    client_t server = { ONLINE, fd, accept_handler, "server", NULL, list_create() };
     /* Set socket in EPOLLIN flag mode, ready to read data */
     add_epoll(epollfd, fd, &server);
 
@@ -705,17 +722,21 @@ int start_server(void) {
     for (int i = 0; i < EPOLL_WORKERS; ++i)
         pthread_create(&workers[i], NULL, worker, (void *) &fds);
 
-    INFO("*** Sizigy v0.1.0\n");
-    INFO("*** Starting server on 127.0.0.1:9090\n");
+    INFO("Sizigy v0.1.0");
+    INFO("Starting server on 127.0.0.1:9090");
 
     /* Use main thread as a worker too */
     worker(&fds);
 
     /* Free all resources allocated */
-    free(global.next_id);
     map_iterate2(global.channels, destroy_queue_data, NULL);
     map_iterate2(global.channels, destroy_channels, NULL);
     map_iterate2(global.clients, destroy_clients, NULL);
+    free(server.subscriptions);
+    free(global.next_id);
+    free(global.throughput);
+    free(global.throttler);
+    pthread_mutex_destroy(&(global.lock));
     /* map_release(global.channels); */
     return 0;
 }

@@ -31,14 +31,13 @@ int set_nonblocking(const int fd) {
 
 
 int create_and_bind(const char *host, const char *port) {
-    struct addrinfo hints;
+    const struct addrinfo hints = {
+        .ai_family = AF_UNSPEC,
+        .ai_socktype = SOCK_STREAM,
+        .ai_flags = AI_PASSIVE
+    };
     struct addrinfo *result, *rp;
     int sfd;
-
-    memset(&hints, 0, sizeof (struct addrinfo));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;     /* 0.0.0.0 all interfaces */
 
     if (getaddrinfo(host, port, &hints, &result) != 0) {
         perror("getaddrinfo error");
@@ -136,7 +135,8 @@ int accept_connection(const int serversock) {
     int clientsock;
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
-    if ((clientsock = accept(serversock, (struct sockaddr *) &addr, &addrlen)) < 0) {
+    if ((clientsock = accept(serversock,
+                    (struct sockaddr *) &addr, &addrlen)) < 0) {
         return -1;
     }
 
@@ -148,18 +148,18 @@ int accept_connection(const int serversock) {
         return -1;
     }
 
-    DEBUG("*** Client connection from %s\n", ip_buff);
+    DEBUG("Client connection from %s", ip_buff);
 
     return clientsock;
 }
 
 
 
-int sendall(const int sfd, uint8_t *buf, ssize_t *len) {
+int sendall(const int sfd, uint8_t *buf, ssize_t len, ssize_t *sent) {
     int total = 0;
-    ssize_t bytesleft = *len;
+    ssize_t bytesleft = len;
     int n = 0;
-    while (total < *len) {
+    while (total < len) {
         n = send(sfd, buf + total, bytesleft, MSG_NOSIGNAL);
         if (n == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -172,7 +172,7 @@ int sendall(const int sfd, uint8_t *buf, ssize_t *len) {
         total += n;
         bytesleft -= n;
     }
-    *len = total;
+    *sent = total;
     return n == -1 ? -1 : 0;
 }
 

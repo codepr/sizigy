@@ -11,6 +11,7 @@
 
 
 int handle_request(int epollfd, int fd) {
+    int ret = 0;
     /* Buffer to initialize the ring buffer, used to handle input from client */
     uint8_t buffer[ONEMB * 2];
 
@@ -27,32 +28,42 @@ int handle_request(int epollfd, int fd) {
     time_t start = time(NULL);
     while (read_all != 0) {
         if ((n = recvall(fd, rbuf, read_all)) < 0) {
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
         if (n == 0) {
-            return 0;
+            ret = 0;
+            goto cleanup;
         }
 
         /* Unpack incoming bytes */
-        read_all = unpack(rbuf, p);
+        char bytes[ringbuf_size(rbuf)];
+        /* Check the header, returning -1 in case of insufficient informations
+           about the total packet length and the subsequent payload bytes */
+        read_all = parse_header(rbuf, bytes);
+
+        if (read_all == 0)
+            read_all = unpack((uint8_t *) bytes, p);
 
         if (time(NULL) - start > 60)
             read_all = 1;
-
     }
 
-    if (read_all == 1)
-        return -1;
+    if (read_all == 1) {
+        ret = -1;
+        goto cleanup;
+    }
 
     if (p->opcode == 0x05)
         printf("%s\n", p->payload.sys_pubpacket->data);
 
     ringbuf_free(rbuf);
-    free(p);
 
     mod_epoll(epollfd, fd, EPOLLIN, NULL);
 
-    return 0;
+cleanup:
+    free(p);
+    return ret;
 }
 
 
@@ -102,7 +113,7 @@ int main(int argc, char **argv) {
     /* Pack it in order to be sent in binary format */
     packed_t *sp = pack(sub_packet);
     /* Subscribe to the channel */
-    if ((n = sendall(connfd, sp->data, &sp->size)) < 0)
+    if ((n = sendall(connfd, sp->data, sp->size, &(ssize_t) { 0 })) < 0)
         return -1;
 
     free(sp);

@@ -11,8 +11,8 @@ char *readline(char *prompt) {
     fputs(prompt, stdout);
     fgets(buffer, BUFSIZE, stdin);
     char *cpy = malloc(strlen(buffer) + 1);
-    strcpy(cpy, buffer);
-    cpy[strlen(cpy) - 1] = '\0';
+    strncpy(cpy, buffer, strlen(cpy) - 1);
+    cpy[strlen(cpy)] = '\0';
     return cpy;
 }
 
@@ -29,15 +29,16 @@ int main(int argc, char **argv) {
         char *input = readline("> ");
 
         if (strncasecmp(input, "QUIT", 4) == 0) {
-            if ((n = sendall(connfd, quitp->data, &quitp->size)) < 0)
+            if ((n = sendall(connfd, quitp->data, quitp->size, &(ssize_t) { 0 })) < 0)
                 printf("Error packing\n");
+            free(input);
             break;
         }
 
         protocol_packet_t *pub = create_cli_pubpacket(PUBLISH_MESSAGE, 0, 0, "test01 ", input);
         packed_t *p_pub = pack(pub);
 
-        if ((n = sendall(connfd, p_pub->data, &p_pub->size)) < 0)
+        if ((n = sendall(connfd, p_pub->data, p_pub->size, &(ssize_t) { 0 })) < 0)
             printf("Error packing\n");
 
         if ((n = recv(connfd, buffer, BUFSIZE, 0)) < 0)

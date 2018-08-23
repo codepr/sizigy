@@ -11,6 +11,19 @@ struct counter {
 };
 
 
+struct atomic {
+    uint64_t value;
+    pthread_mutex_t lock;
+};
+
+
+struct throttler {
+    uint64_t us;
+    double start;
+    pthread_mutex_t lock;
+};
+
+
 void remove_newline(char *str) {
     str[strcspn(str, "\n")] = 0;
 }
@@ -31,6 +44,62 @@ char *append_string(const char *s1, const char *s2) {
 }
 
 
+throttler_t *init_throttler(void) {
+    throttler_t *t = malloc(sizeof(throttler_t));
+    t->us = 0;
+    t->start = 0.0;
+    pthread_mutex_init(&(t->lock), NULL);
+    return t;
+}
+
+
+void throttler_set_us(throttler_t *t, const uint64_t us) {
+    pthread_mutex_lock(&(t->lock));
+    t->us = us;
+    t->start = clock();
+    pthread_mutex_unlock(&(t->lock));
+}
+
+
+uint64_t throttler_get_us(throttler_t *t) {
+    pthread_mutex_lock(&(t->lock));
+    uint64_t us = t->us;
+    pthread_mutex_unlock(&(t->lock));
+    return us;
+}
+
+
+double throttler_t_get_start(throttler_t *t) {
+    pthread_mutex_lock(&(t->lock));
+    double start = t->start;
+    pthread_mutex_unlock(&(t->lock));
+    return start;
+}
+
+
+atomic_t *init_atomic(void) {
+    atomic_t *a = malloc(sizeof(atomic_t));
+    a->value = 0;
+    pthread_mutex_init(&a->lock, NULL);
+    return a;
+}
+
+
+void set_value(atomic_t *a, const uint64_t value) {
+    pthread_mutex_lock(&(a->lock));
+    a->value = value;
+    pthread_mutex_unlock(&(a->lock));
+}
+
+
+uint64_t get_value(atomic_t *a) {
+    pthread_mutex_lock(&(a->lock));
+    uint64_t v = a->value;
+    pthread_mutex_unlock(&(a->lock));
+    return v;
+}
+
+
 counter_t *init_counter(void) {
     counter_t *c = malloc(sizeof(counter_t));
     c->value = 0;
@@ -39,7 +108,7 @@ counter_t *init_counter(void) {
 }
 
 
-void increment_by(counter_t *c, uint64_t by) {
+void increment_by(counter_t *c, const uint64_t by) {
     pthread_mutex_lock(&c->lock);
     c->value += by;
     pthread_mutex_unlock(&c->lock);
@@ -61,23 +130,29 @@ uint64_t incr_read(counter_t *c) {
 
 
 uint64_t read_counter(counter_t *c) {
-    pthread_mutex_lock(&c->lock);
+    pthread_mutex_lock(&(c->lock));
     uint64_t rc = c->value;
-    pthread_mutex_unlock(&c->lock);
+    pthread_mutex_unlock(&(c->lock));
     return rc;
 }
 
 
-const char *random_name(size_t len) {
+void free_counter(counter_t *c) {
+    free(c);
+}
+
+
+const char *random_name(const size_t len) {
+    size_t length = len;
     char *pool = "abcdefghijklmnopqrstwxyz0123456789";
     /* Length of the string */
     int i = 0;
 
-    char *node_name = malloc(len + 1);
-    node_name[len] = '\0';
+    char *node_name = malloc(length + 1);
+    node_name[length] = '\0';
 
     /* build name using random positions in the poll */
-    while(len--) {
+    while(length--) {
         node_name[i++] = pool[(rand() % strlen(pool))];
     }
 
@@ -85,32 +160,24 @@ const char *random_name(size_t len) {
 }
 
 
+void s_log(const uint8_t level, const char *fmt, ...) {
+    va_list ap;
+    char msg[MAX_LOG_SIZE];
 
-void s_log(uint8_t level, const char *info, ...) {
-    /* Print log only if level is the same of the instance loglevel */
-    if (level <= global.loglevel) {
-        va_list argptr;
-        va_start(argptr, info);
-        char time_buff[50];
-        char prefix[50];
-        time_t now = time(0);
-        strftime(prefix, 50, "%Y-%m-%d %H:%M:%S", localtime(&now));
-        sprintf(time_buff, " ");
-        int totlen = strlen(prefix) + strlen(info) + strlen(time_buff) + 3;
-        char content[totlen];
-        memset(content, 0x00, sizeof(content));
-        strncpy(content, prefix, totlen - 1);
-        content[totlen - 1] = '\0';
-        strncat(content, time_buff, totlen - strlen(content) - 1);
-        strncat(content, info, totlen - strlen(content) - 1);
-        char buf[200];
-        vsnprintf(buf, 199, info, argptr);
-        if (strlen(buf) > 160) {
-            strncpy(buf + 152, " ...\n", 6);
-            buf[159] = '\0';
-        }
-        printf("%s", buf);
-        va_end(argptr);
-    }
+    if (level > global.loglevel) return;
+
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    // Just for standard output for now
+    FILE *fp = stdout;
+    if (!fp) return;
+    // Distinguish message level prefix
+    const char *mark = "I!#";
+    char buf[64];
+    time_t now = time(0);
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    fprintf(fp, "%s %c %s\n", buf, mark[level], msg);
+    fflush(fp);
 }
-

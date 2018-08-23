@@ -6,6 +6,12 @@
 #include "queue.h"
 
 
+#define ADD_DELAY       0
+#define PUB_DELAY       500
+#define MAX_PUB_RETRY   10
+#define PUB_RETRY_DELAY 300
+
+
 typedef struct {
     char *name;
     list_t *subscribers;
@@ -24,7 +30,7 @@ struct subscriber {
 channel_t *create_channel(char *);
 void add_subscriber(channel_t *, struct subscriber *);
 void del_subscriber(channel_t *, struct subscriber *);
-int publish_message(channel_t *, uint8_t, void *);
+int publish_message(channel_t *, uint8_t, void *, int);
 void destroy_channel(channel_t *);
 
 #endif

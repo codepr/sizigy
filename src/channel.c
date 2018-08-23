@@ -1,8 +1,10 @@
+#include <time.h>
 #include <string.h>
-#include <pthread.h>
+#include <unistd.h>
 #include <sys/socket.h>
 #include "map.h"
 #include "util.h"
+#include "server.h"
 #include "parser.h"
 #include "network.h"
 #include "channel.h"
@@ -46,64 +48,101 @@ void del_subscriber(channel_t *chan, struct subscriber *subscriber) {
 }
 
 
-int publish_message(channel_t *chan, uint8_t qos, void *message) {
-    int ret = 0;
+int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
+    int total_bytes_sent = 0;
     uint8_t qos_mod = 0;
+    int increment = incr < 0 ? 0 : 1;
     char *channel = append_string(chan->name, " ");
     uint8_t duplicate = 0;
-    protocol_packet_t *pp = create_sys_pubpacket(PUBLISH_MESSAGE, qos, duplicate, channel, message, 1);
+    protocol_packet_t *pp = create_sys_pubpacket(PUBLISH_MESSAGE, qos, duplicate, channel, message, increment);
     uint64_t id = pp->payload.sys_pubpacket->id;
     packed_t *p = pack(pp);
+    int send_rc = 0;
+    int pubdelay = 0;
+    int base_delay = 500;
+    uint64_t bps = get_value(global.throughput);
+    double start_time = throttler_t_get_start(global.throttler);
+
+    /* Naive throttler, try to maintain the throughput under a fixed threshold */
+    if (bps > 20 * 1024 * 1024 && start_time ==  0.0) {
+        throttler_set_us(global.throttler, 500);
+        pubdelay = base_delay;
+    } else if (bps > 20 * 1024 * 1024 && ((clock() - start_time) / CLOCKS_PER_SEC) < 20) {
+        throttler_set_us(global.throttler, base_delay * 2);
+        pubdelay = base_delay * 1.5;
+    }
+
     /* Prepare packet for AT_LEAST_ONCE subscribers */
     if (pp->payload.sys_pubpacket->qos == AT_MOST_ONCE) {
         pp->payload.sys_pubpacket->qos = AT_LEAST_ONCE;
         qos_mod = 1;
     }
     packed_t *p_ack = pack(pp);
+
     /* Restore original qos */
     if (qos_mod)
         pp->payload.sys_pubpacket->qos = AT_MOST_ONCE;
 
-    DEBUG("*** PUBLISH bytes=%ld channel=%s id=%ld qos=%d redelivered=%d message=%s\n",
+    DEBUG("PUBLISH bytes=%ld channel=%s id=%ld qos=%d redelivered=%d message=%s",
             p->size, chan->name, id, qos, duplicate, (char *) message);
 
     /* Add message to the queue_t associated to the channel */
     enqueue(chan->messages, pp);
 
+    /* Sent bytes sentinel */
+    ssize_t sent = 0;
+
     /* Iterate through all the subscribers to send them the message */
     list_node *cursor = chan->subscribers->head;
     while (cursor) {
         struct subscriber *sub = (struct subscriber *) cursor->data;
+        int retry = MAX_PUB_RETRY;
+        int delay = PUB_RETRY_DELAY;
         /* Check if subscriber has a qos != qos param */
         if (sub->qos > qos) {
-            if (sendall(sub->fd, p_ack->data, &p_ack->size) < 0) {
-                ret = -1;
-                DEBUG("Can't send data to AT_LEAST_ONCE subscriber\n");
-                goto cleanup;
-            }
+            do {
+                send_rc = sendall(sub->fd, p_ack->data, p_ack->size, &sent);
+                if (send_rc < 0) {
+                    perror("Can't publish");
+                    /* DEBUG("Can't send data to AT_LEAST_ONCE subscriber: fd %d qos %d", sub->fd, sub->qos); */
+                    delay = retry < MAX_PUB_RETRY / 2 ? delay : (delay + 50) + (50 * (retry - (MAX_PUB_RETRY / 2)));
+                    printf("RETRY %d DELAY %d\n", retry, delay);
+                    usleep(delay);
+                    --retry;
+                }
+                total_bytes_sent += sent;
+            } while (send_rc < 0 && retry > 0);
         }
         else {
-            if (sendall(sub->fd, p->data, &p->size) < 0) {
-                ret = -1;
-                DEBUG("Can't send data to AT_MOST_ONCE subscriber\n");
-                goto cleanup;
-            }
+            do {
+                send_rc = sendall(sub->fd, p->data, p->size, &sent);
+                if (send_rc < 0) {
+                    perror("Can't publish");
+                    /* DEBUG("Can't send data to AT_MOST_ONCE subscriber: size %ld", p->size); */
+                    delay = retry < MAX_PUB_RETRY / 2 ? delay : (delay + 50) + (50 * (retry - (MAX_PUB_RETRY / 2)));
+                    printf("RETRY %d DELAY %d\n", retry, delay);
+                    usleep(delay);
+                    --retry;
+                }
+                total_bytes_sent += sent;
+            } while (send_rc < 0 && retry > 0);
         }
-        DEBUG(">>> Publishing to %s\n", sub->name);
+        DEBUG("Publishing to %s", sub->name);
+        if (pubdelay > 0) {
+            DEBUG("Applying delay");
+            usleep(pubdelay);
+        }
         cursor = cursor->next;
     }
-cleanup:
-    /* if (qos == AT_LEAST_ONCE || sub->qos == AT_LEAST_ONCE) { */
-    /*     #<{(| Add message to the waiting ACK map_t |)}># */
-    /*     map_put(global.ack_waiting, &id, pp); */
-    /* } */
+    bps = get_value(global.throughput);
+    DEBUG("THROUGHPUT %ld Mb/s", bps/(1024*1024));
     free(p->data);
     free(p_ack->data);
     free(p);
     free(p_ack);
     free(channel);
     free(message);
-    return ret;
+    return total_bytes_sent;
 }
 
 

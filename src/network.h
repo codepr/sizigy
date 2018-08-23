@@ -32,7 +32,7 @@ void add_epoll(const int, const int, void *);
 void mod_epoll(const int, const int, const int, void *);
 
 /* I/O management functions */
-int sendall(const int, uint8_t *, ssize_t *);
+int sendall(const int, uint8_t *, ssize_t, ssize_t *);
 int recvall(const int, ringbuf_t *, ssize_t);
 
 #endif
