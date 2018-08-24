@@ -48,6 +48,40 @@ void del_subscriber(channel_t *chan, struct subscriber *subscriber) {
 }
 
 
+void add_message(channel_t *channel, const uint64_t id,
+        uint8_t qos, uint8_t redelivered, const char *payload, int check_peers) {
+    message_t *m = malloc(sizeof(message_t));
+    m->creation_time = time(NULL);
+    m->id = id;
+    m->qos = qos;
+    m->redelivered = redelivered;
+    m->payload = strdup(payload);
+    m->channel = channel->name;
+    enqueue(channel->messages, m);
+
+    /* Check if cluster has members and spread the replicas */
+    if (check_peers == 1 && global.peers->len > 0) {
+        char *m = append_string(channel->name, " ");
+        protocol_packet_t *pp = create_sys_pubpacket(REPLICA, qos,
+                redelivered, m, (char *) payload, 0);
+        pp->payload.sys_pubpacket->id = id;
+        packed_t *p = pack(pp);
+        list_node *cur = global.peers->head;
+        while (cur) {
+            client_t *c = (client_t *) cur->data;
+            sendall(c->fd, p->data, p->size, &(ssize_t) { 0 });
+            cur = cur->next;
+        }
+        free(m);
+        free(pp->payload.sys_pubpacket->data);
+        free(pp->payload.sys_pubpacket);
+        free(pp);
+        free(p->data);
+        free(p);
+    }
+}
+
+
 int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
     int total_bytes_sent = 0;
     uint8_t qos_mod = 0;
@@ -59,17 +93,20 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
     packed_t *p = pack(pp);
     int send_rc = 0;
     int pubdelay = 0;
-    int base_delay = 500;
-    uint64_t bps = get_value(global.throughput);
-    double start_time = throttler_t_get_start(global.throttler);
 
-    /* Naive throttler, try to maintain the throughput under a fixed threshold */
-    if (bps > 20 * 1024 * 1024 && start_time ==  0.0) {
-        throttler_set_us(global.throttler, 500);
-        pubdelay = base_delay;
-    } else if (bps > 20 * 1024 * 1024 && ((clock() - start_time) / CLOCKS_PER_SEC) < 20) {
-        throttler_set_us(global.throttler, base_delay * 2);
-        pubdelay = base_delay * 1.5;
+    if (ADD_DELAY) {
+        int base_delay = PUB_DELAY;
+        uint64_t bps = get_value(global.throughput);
+        double start_time = throttler_t_get_start(global.throttler);
+
+        /* Naive throttler, try to maintain the throughput under a fixed threshold */
+        if (bps > 20 * 1024 * 1024 && start_time ==  0.0) {
+            throttler_set_us(global.throttler, 500);
+            pubdelay = base_delay;
+        } else if (bps > 20 * 1024 * 1024 && ((clock() - start_time) / CLOCKS_PER_SEC) < 20) {
+            throttler_set_us(global.throttler, base_delay * 2);
+            pubdelay = base_delay * 1.5;
+        }
     }
 
     /* Prepare packet for AT_LEAST_ONCE subscribers */
@@ -87,7 +124,8 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
             p->size, chan->name, id, qos, duplicate, (char *) message);
 
     /* Add message to the queue_t associated to the channel */
-    enqueue(chan->messages, pp);
+    add_message(chan, pp->payload.sys_pubpacket->id, pp->payload.sys_pubpacket->qos,
+            pp->payload.sys_pubpacket->redelivered, message, 1);
 
     /* Sent bytes sentinel */
     ssize_t sent = 0;
@@ -134,12 +172,13 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
         }
         cursor = cursor->next;
     }
-    bps = get_value(global.throughput);
-    DEBUG("THROUGHPUT %ld Mb/s", bps/(1024*1024));
     free(p->data);
     free(p_ack->data);
     free(p);
     free(p_ack);
+    free(pp->payload.sys_pubpacket->data);
+    free(pp->payload.sys_pubpacket);
+    free(pp);
     free(channel);
     free(message);
     return total_bytes_sent;

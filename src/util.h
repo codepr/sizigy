@@ -34,6 +34,7 @@ void free_counter(counter_t *);
 void remove_newline(char *);
 char *append_string(const char *, const char *);
 const char *random_name(const size_t);
+int parse_int(char *);
 
 /* logging */
 

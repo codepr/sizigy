@@ -181,3 +181,14 @@ void s_log(const uint8_t level, const char *fmt, ...) {
     fprintf(fp, "%s %c %s\n", buf, mark[level], msg);
     fflush(fp);
 }
+
+
+int parse_int(char *str) {
+    int n = 0;
+    char *s = str;
+    while (*s != '\0') {
+        n = (n * 10) + (*s - '0');
+        s++;
+    }
+    return n;
+}

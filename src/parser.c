@@ -19,6 +19,8 @@ command_t *parse_command(protocol_packet_t *packet) {
     switch (packet->opcode) {
         case ACK:
         case PING:
+        case JOIN:
+        case JOIN_ACK:
         case DATA:
         case CREATE_CHANNEL:
         case DELETE_CHANNEL:
@@ -61,6 +63,7 @@ command_t *parse_command(protocol_packet_t *packet) {
                 free(packet->payload.sub_packet);
             }
             break;
+        case REPLICA:
         case PUBLISH_MESSAGE:
             if (packet->type == SYSTEM_PACKET) {
                 comm->qos = packet->payload.sys_pubpacket->qos;

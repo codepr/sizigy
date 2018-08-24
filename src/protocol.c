@@ -242,6 +242,8 @@ packed_t *pack(protocol_packet_t *packet) {
         case DATA:
         case QUIT:
         case PING:
+        case JOIN:
+        case JOIN_ACK:
         case CREATE_CHANNEL:
         case DELETE_CHANNEL:
         case UNSUBSCRIBE_CHANNEL:
@@ -306,6 +308,7 @@ packed_t *pack(protocol_packet_t *packet) {
             packed->size = tlen + sizeof(uint32_t);
             packed->data = raw;
             break;
+        case REPLICA:
         case PUBLISH_MESSAGE:
             if (packet->type == SYSTEM_PACKET)
                 p = pack_syspubpacket(packet->payload.sys_pubpacket);
@@ -362,6 +365,8 @@ int8_t unpack(uint8_t *bytes, protocol_packet_t *packet) {
         case DELETE_CHANNEL:
         case UNSUBSCRIBE_CHANNEL:
         case PING:
+        case JOIN:
+        case JOIN_ACK:
         case QUIT:
         case ACK:
         case NACK:
@@ -393,6 +398,7 @@ int8_t unpack(uint8_t *bytes, protocol_packet_t *packet) {
             packet->type = *type;
             packet->payload.sub_packet = unpack_sub_packet(data);
             break;
+        case REPLICA:
         case PUBLISH_MESSAGE:
             type = bytes + sizeof(uint32_t) + sizeof(uint8_t);
             data = type + sizeof(uint8_t);

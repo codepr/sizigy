@@ -21,6 +21,9 @@
 #define NACK                0x08
 #define DATA                0x09
 #define PING                0x0a
+#define JOIN                0x0b
+#define JOIN_ACK            0x0c
+#define REPLICA             0x0d
 
 /* Deliverance guarantee */
 #define AT_MOST_ONCE  0x00

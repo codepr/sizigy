@@ -23,7 +23,7 @@
 #define TIMEOUT         60
 
 
-enum REPLY_TYPE { NO_REPLY, ACK_REPLY, NACK_REPLY, DATA_REPLY, PING_REPLY };
+enum REPLY_TYPE { NO_REPLY, ACK_REPLY, NACK_REPLY, JACK_REPLY, DATA_REPLY, PING_REPLY };
 
 enum STATUS { ONLINE, OFFLINE };
 
@@ -76,6 +76,8 @@ struct global {
     map_t *ack_waiting;
     /* Tracking clients */
     map_t *clients;
+    /* Peers connected */
+    list_t *peers;
     /* Global lock to avoid race conditions on critical shared parts */
     pthread_mutex_t lock;
     /* Approximation of the load */
@@ -89,6 +91,6 @@ extern struct global global;
 
 
 int parse_header(ringbuf_t *, char *);
-int start_server();
+int start_server(const char *, char *, int);
 
 #endif
