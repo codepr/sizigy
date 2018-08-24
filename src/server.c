@@ -133,7 +133,7 @@ static int ping_handler(client_t *c, command_t *cmd) {
 static int join_handler(client_t *c, command_t *cmd) {
     add_reply(c, JACK_REPLY, cmd->qos, c->fd, OK, NULL);
     // XXX for now just insert pointer to client struct
-    list_head_insert(global.peers, c);
+    global.peers = list_head_insert(global.peers, c);
     DEBUG("JOIN request accepted");
     return 0;
 }
@@ -142,7 +142,7 @@ static int join_handler(client_t *c, command_t *cmd) {
 static int join_ack_handler(client_t *c, command_t *cmd) {
     add_reply(c, ACK_REPLY, cmd->qos, c->fd, OK, NULL);
     // XXX for now just insert pointer to client struct
-    list_head_insert(global.peers, c);
+    global.peers = list_head_insert(global.peers, c);
     DEBUG("JOINED cluster");
     return 0;
 }
