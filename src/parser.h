@@ -37,7 +37,7 @@ typedef struct {
         struct build *b;
         struct action *a;
         struct handshake *h;
-    } cmd;
+    };
 } command_t;
 
 

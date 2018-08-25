@@ -55,7 +55,7 @@ int handle_request(int epollfd, int fd) {
     }
 
     if (p->opcode == 0x05)
-        printf("%s\n", p->payload.sys_pubpacket->data);
+        printf("%s\n", p->sys_pubpacket->data);
 
     ringbuf_free(rbuf);
 
@@ -109,7 +109,7 @@ int main(int argc, char **argv) {
     add_epoll(epollfd, connfd, NULL);
     ssize_t n;
     /* Create a protocol formatted packet to subscribe to a channel */
-    protocol_packet_t *sub_packet = create_sys_subpacket(SUBSCRIBE_CHANNEL, 0, 0, "test01");
+    protocol_packet_t *sub_packet = build_request_subscribe("test01", 0);
     /* Pack it in order to be sent in binary format */
     packed_t *sp = pack(sub_packet);
     /* Subscribe to the channel */

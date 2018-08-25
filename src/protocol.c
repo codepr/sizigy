@@ -93,131 +93,122 @@ static struct sub_packet *unpack_sub_packet(uint8_t *bytes) {
 }
 
 
-static packed_t *pack_syspubpacket(struct sys_pubpacket *packet) {
-    ssize_t dlen = strlen((char *) packet->data);
-    uint32_t tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + sizeof(uint64_t) + dlen;
-    uint8_t *raw = malloc(tlen);
-
-    if (!raw) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-
-    uint8_t *meta = raw;
-    uint8_t *qos = raw + sizeof(uint32_t);
-    uint8_t *redelivered = qos + sizeof(uint8_t);
-    uint8_t *id = redelivered + sizeof(uint8_t);
-    uint8_t *data = id + sizeof(uint64_t);
-
-    *((uint32_t *) meta) = dlen;
-    *qos = packet->qos;
-    *redelivered = packet->redelivered;
-    *((uint64_t *) id) = packet->id;
-    memcpy(data, packet->data, dlen);
+static packed_t *pack_pub_packet(struct pub_packet *packet, uint8_t type) {
     packed_t *packed = malloc(sizeof(packed_t));
     if (!packed) {
         perror("malloc(3) failed");
         exit(EXIT_FAILURE);
     }
-    packed->size = tlen;
-    packed->data = raw;
+
+    if (type == SYSTEM_PACKET) {
+        ssize_t dlen = strlen((char *) packet->payload);
+        uint32_t tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + sizeof(uint64_t) + dlen;
+        uint8_t *raw = malloc(tlen);
+
+        if (!raw) {
+            perror("malloc(3) failed");
+            exit(EXIT_FAILURE);
+        }
+
+        uint8_t *meta = raw;
+        uint8_t *qos = raw + sizeof(uint32_t);
+        uint8_t *redelivered = qos + sizeof(uint8_t);
+        uint8_t *id = redelivered + sizeof(uint8_t);
+        uint8_t *data = id + sizeof(uint64_t);
+
+        *((uint32_t *) meta) = dlen;
+        *qos = packet->qos;
+        *redelivered = packet->redelivered;
+        *((uint64_t *) id) = packet->id;
+        memcpy(data, packet->payload, dlen);
+        packed->size = tlen;
+        packed->data = raw;
+
+    } else if (type == CLIENT_PACKET) {
+        ssize_t dlen = strlen((char *) packet->data);
+        uint32_t tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + dlen;
+        uint8_t *raw = malloc(tlen);
+
+        if (!raw) {
+            perror("malloc(3) failed");
+            exit(EXIT_FAILURE);
+        }
+
+        uint8_t *meta = raw;
+        uint8_t *qos = raw + sizeof(uint32_t);
+        uint8_t *redelivered = qos + sizeof(uint8_t);
+        uint8_t *data = redelivered + sizeof(uint8_t);
+
+        *((uint32_t *) meta) = dlen;
+        *qos = packet->qos;
+        *redelivered = packet->redelivered;
+        memcpy(data, packet->data, dlen);
+        packed->size = tlen;
+        packed->data = raw;
+    } else {
+        free(packed);
+        packed = NULL;
+    }
     return packed;
 }
 
 
-static struct sys_pubpacket *unpack_sys_pubpacket(uint8_t *bytes) {
-    uint8_t *meta = bytes;
-    uint8_t *qos = meta + sizeof(uint32_t);
-    uint8_t *redelivered = qos + sizeof(uint8_t);
-    uint8_t *id = redelivered + sizeof(uint8_t);
-    // Move index after data field length and type (for now) to obtain operation code position
-    uint8_t *data = id + sizeof(uint64_t);
+static struct pub_packet *unpack_pub_packet(uint8_t *bytes, uint8_t type) {
     // build up the protocol packet
-    struct sys_pubpacket *packet = malloc(sizeof(struct sys_pubpacket));
+    struct pub_packet *packet = malloc(sizeof(struct pub_packet));
 
     if (!packet) {
         perror("malloc(3) failed");
         exit(EXIT_FAILURE);
     }
 
-    // unpack all bytes into the structure
-    ssize_t data_len = *((uint32_t *) meta);
-    packet->qos = *qos;
-    packet->redelivered = *redelivered;
-    packet->id = *((uint64_t *) id);
-    packet->data = malloc((data_len + 1));
+    if (type == SYSTEM_PACKET) {
+        uint8_t *meta = bytes;
+        uint8_t *qos = meta + sizeof(uint32_t);
+        uint8_t *redelivered = qos + sizeof(uint8_t);
+        uint8_t *id = redelivered + sizeof(uint8_t);
+        // Move index after data field length and type (for now) to obtain operation code position
+        uint8_t *data = id + sizeof(uint64_t);
 
-    if (!packet->data) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
+        // unpack all bytes into the structure
+        ssize_t data_len = *((uint32_t *) meta);
+        packet->qos = *qos;
+        packet->redelivered = *redelivered;
+        packet->id = *((uint64_t *) id);
+        packet->payload = malloc((data_len + 1));
+
+        if (!packet->data) {
+            perror("malloc(3) failed");
+            exit(EXIT_FAILURE);
+        }
+
+        memcpy(packet->payload, data, data_len);
+        packet->payload[data_len] = '\0';
+    } else if (type == CLIENT_PACKET) {
+        uint8_t *meta = bytes;
+        uint8_t *qos = meta + sizeof(uint32_t);
+        uint8_t *redelivered = qos + sizeof(uint8_t);
+        // Move index after data field length and type (for now) to obtain operation code position
+        uint8_t *data = redelivered + sizeof(uint8_t);
+        // unpack all bytes into the structure
+        ssize_t data_len = *((uint32_t *) meta);
+        packet->qos = *qos;
+        packet->redelivered = *redelivered;
+        packet->data = malloc(data_len + 1);
+
+        if (!packet->data) {
+            perror("malloc(3) failed");
+            exit(EXIT_FAILURE);
+        }
+
+        memcpy(packet->data, data, data_len);
+        packet->data[data_len] = '\0';
+
+    } else {
+        free(packet);
+        packet = NULL;
     }
-
-    memcpy(packet->data, data, data_len);
-    packet->data[data_len] = '\0';
     return packet;
-}
-
-
-static packed_t *pack_clipubpacket(struct cli_pubpacket *packet) {
-    ssize_t dlen = strlen((char *) packet->data);
-    uint32_t tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + dlen;
-    uint8_t *raw = malloc(tlen);
-
-    if (!raw) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-
-    uint8_t *meta = raw;
-    uint8_t *qos = raw + sizeof(uint32_t);
-    uint8_t *redelivered = qos + sizeof(uint8_t);
-    uint8_t *data = redelivered + sizeof(uint8_t);
-
-    *((uint32_t *) meta) = dlen;
-    *qos = packet->qos;
-    *redelivered = packet->redelivered;
-    memcpy(data, packet->data, dlen);
-    packed_t *packed = malloc(sizeof(packed_t));
-    if (!packed) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-    packed->size = tlen;
-    packed->data = raw;
-    return packed;
-}
-
-
-static struct cli_pubpacket *unpack_cli_pubpacket(uint8_t *bytes) {
-    uint8_t *meta = bytes;
-    uint8_t *qos = meta + sizeof(uint32_t);
-    uint8_t *redelivered = qos + sizeof(uint8_t);
-    // Move index after data field length and type (for now) to obtain operation code position
-    uint8_t *data = redelivered + sizeof(uint8_t);
-    // build up the protocol packet
-    struct cli_pubpacket *packet = malloc(sizeof(struct cli_pubpacket));
-    if (!packet) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-    // unpack all bytes into the structure
-    ssize_t data_len = *((uint32_t *) meta);
-    packet->qos = *qos;
-    packet->redelivered = *redelivered;
-    packet->data = malloc(data_len + 1);
-
-    if (!packet->data) {
-        perror("malloc(3) failed");
-        goto clean_and_exit;
-    }
-
-    memcpy(packet->data, data, data_len);
-    packet->data[data_len] = '\0';
-    return packet;
-
-clean_and_exit:
-    free(packet);
-    exit(EXIT_FAILURE);
 }
 
 
@@ -248,7 +239,7 @@ packed_t *pack(protocol_packet_t *packet) {
         case DELETE_CHANNEL:
         case UNSUBSCRIBE_CHANNEL:
             // Data byte length
-            dlen = strlen((char *) packet->payload.data);
+            dlen = strlen((char *) packet->data);
             // structure whole length to be allocated
             tlen = sizeof(uint32_t) + (2 * sizeof(uint8_t)) + dlen;
             // bytes to be allocated + size of the data field
@@ -274,12 +265,12 @@ packed_t *pack(protocol_packet_t *packet) {
             *((uint32_t *) meta) = dlen;
             *type = packet->type;
             *opcode = packet->opcode;
-            memcpy(data, packet->payload.data, dlen);
+            memcpy(data, packet->data, dlen);
             packed->size = tlen + sizeof(uint32_t);
             packed->data = raw;
             break;
         case SUBSCRIBE_CHANNEL:
-            p = pack_sub_packet(packet->payload.sub_packet);
+            p = pack_sub_packet(packet->sub_packet);
             // Data byte length
             dlen = p->size;
             // structure whole length to be allocated
@@ -310,10 +301,11 @@ packed_t *pack(protocol_packet_t *packet) {
             break;
         case REPLICA:
         case PUBLISH_MESSAGE:
-            if (packet->type == SYSTEM_PACKET)
-                p = pack_syspubpacket(packet->payload.sys_pubpacket);
-            else
-                p = pack_clipubpacket(packet->payload.cli_pubpacket);
+            /* if (packet->type == SYSTEM_PACKET) */
+            /*     p = pack_syspubpacket(packet->sys_pubpacket); */
+            /* else */
+            /*     p = pack_clipubpacket(packet->cli_pubpacket); */
+            p = pack_pub_packet(packet->pub_packet, packet->type);
             // Data byte length
             dlen = p->size;
             // structure whole length to be allocated
@@ -376,37 +368,38 @@ int8_t unpack(uint8_t *bytes, protocol_packet_t *packet) {
             data = type + sizeof(uint8_t);
             ssize_t data_len = *((uint32_t *) meta);
             packet->type = *type;
-            packet->payload.data = malloc((data_len + 1));
+            packet->data = malloc((data_len + 1));
 
-            if (!packet->payload.data) {
+            if (!packet->data) {
                 perror("malloc(3) failed");
                 exit(EXIT_FAILURE);
             }
 
-            memcpy(packet->payload.data, data, data_len);
-            packet->payload.data[data_len] = '\0';
+            memcpy(packet->data, data, data_len);
+            packet->data[data_len] = '\0';
             break;
         case HANDSHAKE:
             type = bytes + sizeof(uint32_t) + sizeof(uint8_t);
             data = type + sizeof(uint8_t);
             packet->type = *type;
-            packet->payload.handshake_packet = unpack_handshake_packet(data);
+            packet->handshake_packet = unpack_handshake_packet(data);
             break;
         case SUBSCRIBE_CHANNEL:
             type = bytes + sizeof(uint32_t) + sizeof(uint8_t);
             data = type + sizeof(uint8_t);
             packet->type = *type;
-            packet->payload.sub_packet = unpack_sub_packet(data);
+            packet->sub_packet = unpack_sub_packet(data);
             break;
         case REPLICA:
         case PUBLISH_MESSAGE:
             type = bytes + sizeof(uint32_t) + sizeof(uint8_t);
             data = type + sizeof(uint8_t);
             packet->type = *type;
-            if (packet->type == SYSTEM_PACKET)
-                packet->payload.sys_pubpacket = unpack_sys_pubpacket(data);
-            else
-                packet->payload.cli_pubpacket = unpack_cli_pubpacket(data);
+            packet->pub_packet = unpack_pub_packet(data, packet->type);
+            /* if (packet->type == SYSTEM_PACKET) */
+            /*     packet->sys_pubpacket = unpack_sys_pubpacket(data); */
+            /* else */
+            /*     packet->cli_pubpacket = unpack_cli_pubpacket(data); */
             break;
         default:
             return -1;
@@ -415,115 +408,49 @@ int8_t unpack(uint8_t *bytes, protocol_packet_t *packet) {
 }
 
 
-protocol_packet_t *create_data_packet(uint8_t opcode, uint8_t *data) {
-    protocol_packet_t *packet = malloc(sizeof(protocol_packet_t));
-    if (!packet) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-    packet->type = SYSTEM_PACKET;
-    packet->opcode = opcode;
-    packet->payload.data = data;
-    return packet;
-}
-
-
-protocol_packet_t *create_sys_subpacket(uint8_t opcode, uint8_t qos, int64_t offset, char *channel) {
-    struct sub_packet *subpacket = malloc(sizeof(struct sub_packet));
-    if (!subpacket) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-    subpacket->qos = qos;
-    subpacket->offset = offset;
-    subpacket->channel_name = (uint8_t *) channel;
-
-    protocol_packet_t *packet = malloc(sizeof(protocol_packet_t));
-    if (!packet) {
-        perror("malloc(3) failed");
-        goto clean_and_exit;
-    }
-    packet->type = SYSTEM_PACKET;
-    packet->opcode = opcode;
-    packet->payload.sub_packet = subpacket;
-
-    return packet;
-
-clean_and_exit:
-    free(subpacket);
-    exit(EXIT_FAILURE);
-}
-
-
-protocol_packet_t *create_sys_pubpacket(uint8_t opcode, uint8_t qos,
-        uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
-
-    uint64_t id = read_counter(global.next_id);
-    if ((opcode == DATA || opcode == PUBLISH_MESSAGE) && incr == 1) {
-        id = incr_read(global.next_id);
-    }
-    char *data = append_string(channel_name, message);
-    struct sys_pubpacket *sys_pubpacket = malloc(sizeof(struct sys_pubpacket));
-    if (!sys_pubpacket) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-    sys_pubpacket->qos = qos;
-    sys_pubpacket->redelivered = redelivered;
-    sys_pubpacket->id = id;
-    sys_pubpacket->data = (uint8_t *) data;
+protocol_packet_t *build_packet(uint8_t type, uint8_t opcode, uint8_t qos,
+        uint8_t redelivered, char *channel_name, char *message, int64_t offset, uint8_t incr) {
 
     protocol_packet_t *packet = malloc(sizeof(protocol_packet_t));
     if (!packet) {
         perror("malloc(3) failed");
         exit(EXIT_FAILURE);
     }
-    packet->type = SYSTEM_PACKET;
+    packet->type = type;
     packet->opcode = opcode;
-    packet->payload.sys_pubpacket = sys_pubpacket;
 
-    return packet;
-}
-
-
-protocol_packet_t *create_cli_pubpacket(uint8_t opcode, uint8_t qos, uint8_t redelivered, char *channel, char *message) {
-    char *data = append_string(channel, message);
-    struct cli_pubpacket *cp = malloc(sizeof(struct cli_pubpacket));
-    if (!cp) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
+    if (opcode != PUBLISH_MESSAGE && opcode != SUBSCRIBE_CHANNEL && opcode != REPLICA) {
+        packet->data = (uint8_t *) message;
+    } else if (opcode == SUBSCRIBE_CHANNEL) {
+        struct sub_packet *subpacket = malloc(sizeof(struct sub_packet));
+        if (!subpacket) {
+            perror("malloc(3) failed");
+            exit(EXIT_FAILURE);
+        }
+        subpacket->qos = qos;
+        subpacket->offset = offset;
+        subpacket->channel_name = (uint8_t *) channel_name;
+        packet->sub_packet = subpacket;
+    } else {
+        char *data = append_string(channel_name, message);
+        struct pub_packet *pub_packet = malloc(sizeof(struct pub_packet));
+        if (!pub_packet) {
+            perror("malloc(3) failed");
+            exit(EXIT_FAILURE);
+        }
+        pub_packet->qos = qos;
+        pub_packet->redelivered = redelivered;
+        if (type == SYSTEM_PACKET) {
+            uint64_t id = read_counter(global.next_id);
+            if ((opcode == DATA || opcode == PUBLISH_MESSAGE) && incr == 1) {
+                id = incr_read(global.next_id);
+            }
+            pub_packet->id = id;
+            pub_packet->payload = (uint8_t *) data;
+        } else {
+            pub_packet->data = (uint8_t *) data;
+        }
+        packet->pub_packet = pub_packet;
     }
-    cp->qos = qos;
-    cp->redelivered = redelivered;
-    cp->data = (uint8_t *) data;
-
-    protocol_packet_t *packet = malloc(sizeof(protocol_packet_t));
-    if (!packet) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
-    packet->type = CLIENT_PACKET;
-    packet->opcode = opcode;
-    packet->payload.cli_pubpacket = cp;
-
     return packet;
-}
-
-
-packed_t *pack_sys_pubpacket(uint8_t opcode, uint8_t qos,
-        uint8_t redelivered, char *channel_name, char *message, uint8_t incr) {
-    protocol_packet_t *p = create_sys_pubpacket(opcode, qos, redelivered, channel_name, message, incr);
-    packed_t *packed = pack(p);
-    free(p->payload.sys_pubpacket->data);
-    free(p);
-    return packed;
-}
-
-
-packed_t *pack_data_packet(uint8_t opcode, uint8_t *data) {
-    protocol_packet_t *p = create_data_packet(opcode, data);
-    packed_t *packed = pack(p);
-    free(p->payload.data);
-    free(p);
-    return packed;
 }

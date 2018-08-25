@@ -47,20 +47,20 @@ struct sub_packet {
 
 /* Publish packet from system, qos and redelivered are optional and fallback
    respectively to 0 and 0, ID is an atomically auto-incremented long long int,
-   data represents the message to be published */
-struct sys_pubpacket {
-    uint8_t qos;
-    uint8_t redelivered;
-    uint64_t id;
-    uint8_t *data;
-};
+   data represents the message to be published.
 
-/* Publish packet from client, qos and redelivered are optional and fallback
+   Publish packet from client, qos and redelivered are optional and fallback
    respectively to 0 and 0, data represents the message to be published */
-struct cli_pubpacket {
+struct pub_packet {
     uint8_t qos;
     uint8_t redelivered;
-    uint8_t *data;
+    union {
+        struct {
+            uint64_t id;
+            uint8_t *payload;
+        };
+        uint8_t *data;
+    };
 };
 
 /* Protocol defined packet, based on type and opcode fields, payload union have
@@ -71,11 +71,12 @@ typedef struct {
     uint8_t opcode;
     union {
         struct sub_packet *sub_packet;
-        struct sys_pubpacket *sys_pubpacket;
-        struct cli_pubpacket *cli_pubpacket;
+        struct pub_packet *pub_packet;
+        /* struct sys_pubpacket *sys_pubpacket; */
+        /* struct cli_pubpacket *cli_pubpacket; */
         struct handshake_packet *handshake_packet;
         uint8_t *data;
-    } payload;
+    };
 } protocol_packet_t;
 
 /* Contains the byte array version of the protocol_packet_t and the size contained */
@@ -84,6 +85,9 @@ typedef struct {
     uint8_t *data;
 } packed_t;
 
+
+typedef packed_t request_t;
+typedef packed_t response_t;
 
 /* Packs protocol_packet_t fields into a byte array according to the endianess
    of the system, returning a packed_t packet. Data field and size are finally
@@ -95,29 +99,13 @@ packed_t *pack(protocol_packet_t*);
    it or use a stack defined pointer */
 int8_t unpack(uint8_t *, protocol_packet_t *);
 
-/* Create a generic packet, return a protocol_packet_t with fields type, opcode
-   and generic bytes as payload union field data */
-protocol_packet_t *create_data_packet(uint8_t, uint8_t *);
+#define build_request_subscribe(c, o) (build_packet(CLIENT_PACKET, SUBSCRIBE_CHANNEL, 0, 0, (c), NULL, (o), 0))
+#define build_request_publish(q, r, c, m) (build_packet(CLIENT_PACKET, PUBLISH_MESSAGE, (q), (r), (c), (m), 0, 0))
+#define build_response_publish(q, r, c, m, i) (build_packet(SYSTEM_PACKET, PUBLISH_MESSAGE, (q), (r), (c), (m), 0, (i)))
+#define build_request_ack(o, m) (build_packet(CLIENT_PACKET, (o), 0, 0, NULL, (m), 0, 0))
+#define build_response_ack(o, m) (build_packet(SYSTEM_PACKET, (o), 0, 0, NULL, (m), 0, 0))
 
-/* Create a SYSTEM_PACKET type subcription packet, like data_packet but with
-   payload set to sys_subpacket */
-protocol_packet_t *create_sys_subpacket(uint8_t, uint8_t, int64_t, char *);
-
-/* Create a SYSTEM_PACKET type publish packet, again like previous packets but
-   with payload union set and filled to sys_pubpacket */
-protocol_packet_t *create_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
-
-/* Create a CLIENT_PACKET type publish packet, like previous packets but
-   with payload union set and filled to cli_pubpacket, resulting in a slightly
-   lighter version of the sys_pubpacket */
-protocol_packet_t *create_cli_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *);
-
-/* Mix create_sys_pubpacket with pack to return a packed_t structure ready to
-   be sent */
-packed_t *pack_sys_pubpacket(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
-
-/* Same as pack_sys_pubpacket but creating a generic data packet */
-packed_t *pack_data_packet(uint8_t, uint8_t *);
+protocol_packet_t *build_packet(uint8_t, uint8_t, uint8_t, uint8_t, char *, char *, int64_t, uint8_t);
 
 
 #endif
