@@ -24,11 +24,7 @@ static int sub_compare(void *arg1, void *arg2) {
 
 channel_t *create_channel(char *name) {
    channel_t *channel = malloc(sizeof(channel_t));
-
-   if (!channel) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
+   if (!channel) oom("creating channel");
 
    channel->name = strdup(name);
    channel->subscribers = list_create();
@@ -48,7 +44,7 @@ void del_subscriber(channel_t *chan, struct subscriber *subscriber) {
 }
 
 
-void add_message(channel_t *channel, const uint64_t id,
+void store_message(channel_t *channel, const uint64_t id,
         uint8_t qos, uint8_t redelivered, const char *payload, int check_peers) {
     message_t *m = malloc(sizeof(message_t));
     m->creation_time = time(NULL);
@@ -62,7 +58,7 @@ void add_message(channel_t *channel, const uint64_t id,
     /* Check if cluster has members and spread the replicas */
     if (check_peers == 1 && global.peers->len > 0) {
         char *m = append_string(channel->name, " ");
-        protocol_packet_t *pp = build_response_publish(qos, redelivered, m, (char *) payload, 0);
+        protocol_packet_t *pp = build_replica(qos, redelivered, m, (char *) payload);
         pp->pub_packet->id = id;
         packed_t *p = pack(pp);
         list_node *cur = global.peers->head;
@@ -95,7 +91,7 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
 
     if (ADD_DELAY) {
         int base_delay = PUB_DELAY;
-        uint64_t bps = get_value(global.throughput);
+        uint64_t bps = read_atomic(global.throughput);
         double start_time = throttler_t_get_start(global.throttler);
 
         /* Naive throttler, try to maintain the throughput under a fixed threshold */
@@ -123,7 +119,7 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
             p->size, chan->name, id, qos, duplicate, (char *) message);
 
     /* Add message to the queue_t associated to the channel */
-    add_message(chan, pp->pub_packet->id, pp->pub_packet->qos,
+    store_message(chan, pp->pub_packet->id, pp->pub_packet->qos,
             pp->pub_packet->redelivered, message, 1);
 
     /* Sent bytes sentinel */

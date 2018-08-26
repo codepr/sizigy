@@ -1,14 +1,9 @@
+#include <errno.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include "util.h"
 #include "server.h"
-
-
-struct counter {
-    uint64_t value;
-    pthread_mutex_t lock;
-};
 
 
 struct atomic {
@@ -32,11 +27,10 @@ void remove_newline(char *str) {
 char *append_string(const char *s1, const char *s2) {
     const size_t len1 = strlen(s1);
     const size_t len2 = strlen(s2);
+
     char *result = malloc(len1 + len2 + 1); // +1 for the null-terminator
-    if (!result) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
+    if (!result) oom("appending string");
+
     // in real code you would check for errors in malloc here
     memcpy(result, s1, len1);
     memcpy(result + len1, s2, len2 + 1); // +1 to copy the null-terminator
@@ -80,47 +74,31 @@ double throttler_t_get_start(throttler_t *t) {
 atomic_t *init_atomic(void) {
     atomic_t *a = malloc(sizeof(atomic_t));
     a->value = 0;
-    pthread_mutex_init(&a->lock, NULL);
+    pthread_mutex_init(&(a->lock), NULL);
     return a;
 }
 
 
-void set_value(atomic_t *a, const uint64_t value) {
+void write_atomic(atomic_t *a, const uint64_t value) {
     pthread_mutex_lock(&(a->lock));
     a->value = value;
     pthread_mutex_unlock(&(a->lock));
 }
 
 
-uint64_t get_value(atomic_t *a) {
-    pthread_mutex_lock(&(a->lock));
-    uint64_t v = a->value;
-    pthread_mutex_unlock(&(a->lock));
-    return v;
-}
-
-
-counter_t *init_counter(void) {
-    counter_t *c = malloc(sizeof(counter_t));
-    c->value = 0;
-    pthread_mutex_init(&c->lock, NULL);
-    return c;
-}
-
-
-void increment_by(counter_t *c, const uint64_t by) {
+void increment_by(atomic_t *c, const uint64_t by) {
     pthread_mutex_lock(&c->lock);
     c->value += by;
     pthread_mutex_unlock(&c->lock);
 }
 
 
-void increment(counter_t *c) {
+void increment(atomic_t *c) {
     increment_by(c, 1);
 }
 
 
-uint64_t incr_read(counter_t *c) {
+uint64_t incr_read_atomic(atomic_t *c) {
     pthread_mutex_lock(&c->lock);
     c->value += 1;
     uint64_t rc = c->value;
@@ -129,7 +107,7 @@ uint64_t incr_read(counter_t *c) {
 }
 
 
-uint64_t read_counter(counter_t *c) {
+uint64_t read_atomic(atomic_t *c) {
     pthread_mutex_lock(&(c->lock));
     uint64_t rc = c->value;
     pthread_mutex_unlock(&(c->lock));
@@ -137,7 +115,7 @@ uint64_t read_counter(counter_t *c) {
 }
 
 
-void free_counter(counter_t *c) {
+void free_atomic(atomic_t *c) {
     free(c);
 }
 
@@ -191,4 +169,11 @@ int parse_int(char *str) {
         s++;
     }
     return n;
+}
+
+
+void oom(const char *msg) {
+    fprintf(stderr, "malloc(3) failed: %s %s\n", strerror(errno), msg);
+    fflush(stderr);
+    exit(EXIT_FAILURE);
 }

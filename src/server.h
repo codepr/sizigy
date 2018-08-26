@@ -69,7 +69,7 @@ struct global {
     /* Logging level, to be set by reading configuration */
     uint8_t loglevel;
     /* Atomic auto-increment unsigned long long int to get the next message ID */
-    counter_t *next_id;
+    atomic_t *next_id;
     /* Channels mapping */
     map_t *channels;
     /* ACK awaiting mapping fds (Unused) */
@@ -84,6 +84,8 @@ struct global {
     atomic_t *throughput;
     /* Throttler utility */
     throttler_t *throttler;
+    /* Epoll workers count */
+    int workers;
 };
 
 

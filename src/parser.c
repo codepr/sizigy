@@ -9,21 +9,17 @@
 command_t *parse_command(protocol_packet_t *packet) {
     char *tmp = NULL;
     command_t *comm = malloc(sizeof(command_t));
-    if (!comm) {
-        perror("malloc(3) failed");
-        exit(EXIT_FAILURE);
-    }
+    if (!comm) oom("parsing command");
+
     comm->opcode = packet->opcode;
     comm->qos = 0;
 
     switch (packet->opcode) {
         case ACK:
         case PING:
-        case JOIN:
-        case JOIN_ACK:
+        case CLUSTER_JOIN:
+        case CLUSTER_JOIN_ACK:
         case DATA:
-        case CREATE_CHANNEL:
-        case DELETE_CHANNEL:
         case UNSUBSCRIBE_CHANNEL:
             if (!packet->data)
                 comm->opcode = ERR_MISS_CHAN;
@@ -90,10 +86,7 @@ command_t *parse_command(protocol_packet_t *packet) {
                     comm->opcode = ERR_MISS_MEX;
                 else {
                     struct action *a = malloc(sizeof(struct action));
-                    if (!a) {
-                        perror("malloc(3) failed");
-                        exit(EXIT_FAILURE);
-                    }
+                    if (!a) oom("parsing publish command");
                     a->channel_name = strdup(channel);
                     a->message = strdup(message_str);
                     if (packet->type == SYSTEM_PACKET)

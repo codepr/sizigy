@@ -11,19 +11,17 @@
 
 /* Operation codes */
 #define HANDSHAKE           0x00
-#define CREATE_CHANNEL      0x01
-#define DELETE_CHANNEL      0x02
-#define SUBSCRIBE_CHANNEL   0x03
-#define UNSUBSCRIBE_CHANNEL 0x04
-#define PUBLISH_MESSAGE     0x05
-#define QUIT                0x06
-#define ACK                 0x07
-#define NACK                0x08
-#define DATA                0x09
-#define PING                0x0a
-#define JOIN                0x0b
-#define JOIN_ACK            0x0c
-#define REPLICA             0x0d
+#define SUBSCRIBE_CHANNEL   0x01
+#define UNSUBSCRIBE_CHANNEL 0x02
+#define PUBLISH_MESSAGE     0x03
+#define QUIT                0x04
+#define ACK                 0x05
+#define NACK                0x06
+#define DATA                0x07
+#define PING                0x08
+#define CLUSTER_JOIN        0x09
+#define CLUSTER_JOIN_ACK    0x0a
+#define REPLICA             0x0b
 
 /* Deliverance guarantee */
 #define AT_MOST_ONCE  0x00
@@ -72,8 +70,6 @@ typedef struct {
     union {
         struct sub_packet *sub_packet;
         struct pub_packet *pub_packet;
-        /* struct sys_pubpacket *sys_pubpacket; */
-        /* struct cli_pubpacket *cli_pubpacket; */
         struct handshake_packet *handshake_packet;
         uint8_t *data;
     };
@@ -102,6 +98,7 @@ int8_t unpack(uint8_t *, protocol_packet_t *);
 #define build_request_subscribe(c, o) (build_packet(CLIENT_PACKET, SUBSCRIBE_CHANNEL, 0, 0, (c), NULL, (o), 0))
 #define build_request_publish(q, r, c, m) (build_packet(CLIENT_PACKET, PUBLISH_MESSAGE, (q), (r), (c), (m), 0, 0))
 #define build_response_publish(q, r, c, m, i) (build_packet(SYSTEM_PACKET, PUBLISH_MESSAGE, (q), (r), (c), (m), 0, (i)))
+#define build_replica(q, r, c, m) (build_packet(SYSTEM_PACKET, REPLICA, (q), (r), (c), (m), 0, 0))
 #define build_request_ack(o, m) (build_packet(CLIENT_PACKET, (o), 0, 0, NULL, (m), 0, 0))
 #define build_response_ack(o, m) (build_packet(SYSTEM_PACKET, (o), 0, 0, NULL, (m), 0, 0))
 

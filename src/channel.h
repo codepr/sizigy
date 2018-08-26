@@ -41,7 +41,7 @@ channel_t *create_channel(char *);
 void add_subscriber(channel_t *, struct subscriber *);
 void del_subscriber(channel_t *, struct subscriber *);
 int publish_message(channel_t *, uint8_t, void *, int);
-void add_message(channel_t *, const uint64_t, uint8_t, uint8_t, const char *, int);
+void store_message(channel_t *, const uint64_t, uint8_t, uint8_t, const char *, int);
 void destroy_channel(channel_t *);
 
 #endif
