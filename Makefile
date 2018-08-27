@@ -7,7 +7,6 @@ SRC=src/map.c 		\
 	src/util.c		\
 	src/list.c		\
 	src/queue.c		\
-	src/parser.c 	\
 	src/server.c	\
 	src/channel.c   \
 	src/ringbuf.c	\

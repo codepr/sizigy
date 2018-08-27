@@ -55,7 +55,7 @@ int handle_request(int epollfd, int fd) {
     }
 
     if (p->opcode == 0x05)
-        printf("%s\n", p->sys_pubpacket->data);
+        printf("%s\n", p->pub_packet->data);
 
     ringbuf_free(rbuf);
 

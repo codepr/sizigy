@@ -87,7 +87,6 @@ int send_queue(queue_t *q, void *ptr, sendfunc f) {
     struct subscriber *sub = (struct subscriber *) ptr;
     int ret = 0;
     int64_t n = q->len;
-    printf("LEN %ld\n", n);
     queue_item *item = q->front;
     while (item) {
         if (n <= sub->offset || sub->offset > q->len || sub->offset == -1)

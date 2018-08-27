@@ -7,12 +7,17 @@
 #include "map.h"
 #include "util.h"
 #include "list.h"
-#include "parser.h"
 #include "ringbuf.h"
+#include "protocol.h"
 
 
 #define EPOLL_WORKERS 4
 #define MAX_EVENTS	  64
+
+#define ERR_UNKNOWN   0x64
+#define ERR_MISS_CHAN 0x65
+#define ERR_MISS_MEX  0x66
+#define ERR_MISS_ID   0x67
 
 #define OK          "OK\n"
 #define E_UNKNOWN   "ERR: Unknown command\n"
@@ -59,7 +64,7 @@ struct reply {
 
 struct command {
     int ctype;
-    int (*handler)(client_t *, command_t *cmd);
+    int (*handler)(client_t *, request_t *);
 };
 
 

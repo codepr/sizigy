@@ -5,7 +5,6 @@
 #include "map.h"
 #include "util.h"
 #include "server.h"
-#include "parser.h"
 #include "network.h"
 #include "channel.h"
 
@@ -55,12 +54,12 @@ void store_message(channel_t *channel, const uint64_t id,
     m->channel = channel->name;
     enqueue(channel->messages, m);
 
-    /* Check if cluster has members and spread the replicas */
+    // Check if cluster has members and spread the replicas
     if (check_peers == 1 && global.peers->len > 0) {
         char *m = append_string(channel->name, " ");
-        protocol_packet_t *pp = build_replica(qos, redelivered, m, (char *) payload);
-        pp->pub_packet->id = id;
-        packed_t *p = pack(pp);
+        request_t *replica_r = build_rep_req(qos, m, (char *) payload);
+        replica_r->id = id;
+        packed_t *p = pack_request(replica_r);
         list_node *cur = global.peers->head;
         while (cur) {
             client_t *c = (client_t *) cur->data;
@@ -68,9 +67,8 @@ void store_message(channel_t *channel, const uint64_t id,
             cur = cur->next;
         }
         free(m);
-        free(pp->pub_packet->payload);
-        free(pp->pub_packet);
-        free(pp);
+        free(replica_r->channel);
+        free(replica_r);
         free(p->data);
         free(p);
     }
@@ -83,9 +81,9 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
     int increment = incr < 0 ? 0 : 1;
     char *channel = append_string(chan->name, " ");
     uint8_t duplicate = 0;
-    protocol_packet_t *pp = build_response_publish(qos, duplicate, channel, message, increment);
-    uint64_t id = pp->pub_packet->id;
-    packed_t *p = pack(pp);
+    response_t *response = build_pub_res(qos, channel, message, increment);
+    uint64_t id = response->id;
+    packed_t *p = pack_response(response);
     int send_rc = 0;
     int pubdelay = 0;
 
@@ -105,22 +103,21 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
     }
 
     /* Prepare packet for AT_LEAST_ONCE subscribers */
-    if (pp->pub_packet->qos == AT_MOST_ONCE) {
-        pp->pub_packet->qos = AT_LEAST_ONCE;
+    if (response->qos == AT_MOST_ONCE) {
+        response->qos = AT_LEAST_ONCE;
         qos_mod = 1;
     }
-    packed_t *p_ack = pack(pp);
+    packed_t *p_ack = pack_response(response);
 
     /* Restore original qos */
     if (qos_mod)
-        pp->pub_packet->qos = AT_MOST_ONCE;
+        response->qos = AT_MOST_ONCE;
 
     DEBUG("PUBLISH bytes=%ld channel=%s id=%ld qos=%d redelivered=%d message=%s",
             p->size, chan->name, id, qos, duplicate, (char *) message);
 
     /* Add message to the queue_t associated to the channel */
-    store_message(chan, pp->pub_packet->id, pp->pub_packet->qos,
-            pp->pub_packet->redelivered, message, 1);
+    store_message(chan, response->id, response->qos, response->sent_count, message, 1);
 
     /* Sent bytes sentinel */
     ssize_t sent = 0;
@@ -171,9 +168,9 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
     free(p_ack->data);
     free(p);
     free(p_ack);
-    free(pp->pub_packet->payload);
-    free(pp->pub_packet);
-    free(pp);
+    /* free(response->channel); */
+    /* free(response->pub_packet); */
+    free(response);
     free(channel);
     free(message);
     return total_bytes_sent;
