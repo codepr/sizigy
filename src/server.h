@@ -38,12 +38,17 @@ typedef struct client client_t;
 typedef struct reply reply_t;
 
 struct client {
+    uint8_t type;
     uint8_t status;
     int fd;
     int (*ctx_handler)(int, client_t *);
     char *id;
     reply_t *reply;
     list_t *subscriptions;
+    union {
+        request_t *req;
+        response_t *res;
+    };
 };
 
 
@@ -64,7 +69,7 @@ struct reply {
 
 struct command {
     int ctype;
-    int (*handler)(client_t *, request_t *);
+    int (*handler)(client_t *);
 };
 
 
@@ -97,7 +102,7 @@ struct global {
 extern struct global global;
 
 
-int parse_header(ringbuf_t *, char *);
+int parse_header(ringbuf_t *, char *, uint8_t *);
 int start_server(const char *, char *, int);
 
 #endif

@@ -22,13 +22,15 @@ static int sub_compare(void *arg1, void *arg2) {
 
 
 channel_t *create_channel(char *name) {
-   channel_t *channel = malloc(sizeof(channel_t));
-   if (!channel) oom("creating channel");
 
-   channel->name = strdup(name);
-   channel->subscribers = list_create();
-   channel->messages = create_queue();
-   return channel;
+    channel_t *channel = malloc(sizeof(channel_t));
+    if (!channel) oom("creating channel");
+
+    channel->name = strdup(name);
+    channel->subscribers = list_create();
+    channel->messages = create_queue();
+
+    return channel;
 }
 
 
@@ -45,7 +47,10 @@ void del_subscriber(channel_t *chan, struct subscriber *subscriber) {
 
 void store_message(channel_t *channel, const uint64_t id,
         uint8_t qos, uint8_t redelivered, const char *payload, int check_peers) {
+
     message_t *m = malloc(sizeof(message_t));
+    if (!m) oom("creating message to be stored");
+
     m->creation_time = time(NULL);
     m->id = id;
     m->qos = qos;
@@ -61,16 +66,17 @@ void store_message(channel_t *channel, const uint64_t id,
         replica_r->id = id;
         packed_t *p = pack_request(replica_r);
         list_node *cur = global.peers->head;
+
         while (cur) {
             client_t *c = (client_t *) cur->data;
             sendall(c->fd, p->data, p->size, &(ssize_t) { 0 });
             cur = cur->next;
         }
+
         free(m);
-        free(replica_r->channel);
+        /* free(replica_r->channel); */
         free(replica_r);
-        free(p->data);
-        free(p);
+        free_packed(p);
     }
 }
 
@@ -134,7 +140,6 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
                 send_rc = sendall(sub->fd, p_ack->data, p_ack->size, &sent);
                 if (send_rc < 0) {
                     perror("Can't publish");
-                    /* DEBUG("Can't send data to AT_LEAST_ONCE subscriber: fd %d qos %d", sub->fd, sub->qos); */
                     delay = retry < MAX_PUB_RETRY / 2 ? delay : (delay + 50) + (50 * (retry - (MAX_PUB_RETRY / 2)));
                     printf("RETRY %d DELAY %d\n", retry, delay);
                     usleep(delay);
@@ -148,7 +153,6 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
                 send_rc = sendall(sub->fd, p->data, p->size, &sent);
                 if (send_rc < 0) {
                     perror("Can't publish");
-                    /* DEBUG("Can't send data to AT_MOST_ONCE subscriber: size %ld", p->size); */
                     delay = retry < MAX_PUB_RETRY / 2 ? delay : (delay + 50) + (50 * (retry - (MAX_PUB_RETRY / 2)));
                     printf("RETRY %d DELAY %d\n", retry, delay);
                     usleep(delay);
@@ -164,12 +168,8 @@ int publish_message(channel_t *chan, uint8_t qos, void *message, int incr) {
         }
         cursor = cursor->next;
     }
-    free(p->data);
-    free(p_ack->data);
-    free(p);
-    free(p_ack);
-    /* free(response->channel); */
-    /* free(response->pub_packet); */
+    free_packed(p);
+    free_packed(p_ack);
     free(response);
     free(channel);
     free(message);
@@ -181,7 +181,7 @@ void destroy_channel(channel_t *chan) {
     if (chan->name)
         free(chan->name);
     if (chan->subscribers)
-        list_release(chan->subscribers);
+        list_release(chan->subscribers, 1);
     if (chan->messages)
         release_queue(chan->messages);
     free(chan);

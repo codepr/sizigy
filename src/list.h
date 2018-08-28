@@ -21,7 +21,7 @@ typedef int (*compare_func)(void *, void *);
 
 list_t *list_create(void);
 list_t *list_attach(list_t *, list_node *, unsigned long);
-void list_release(list_t *);
+void list_release(list_t *, int);
 list_t *list_head_insert(list_t *, void *);
 list_t *list_tail_insert(list_t *, void *);
 list_node *list_remove_node(list_node *, list_node *, compare_func);

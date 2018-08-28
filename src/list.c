@@ -33,7 +33,7 @@ list_t *list_attach(list_t *l, list_node *head, unsigned long len) {
 /*
  * Destroy a list, releasing all allocated memory
  */
-void list_release(list_t *l) {
+void list_release(list_t *l, int deep) {
     if (!l) return;
     list_node *h = l->head;
     list_node *tmp;
@@ -41,7 +41,7 @@ void list_release(list_t *l) {
     while (l->len--) {
         tmp = h->next;
         if (h) {
-            if (h->data) free(h->data);
+            if (h->data && deep == 1) free(h->data);
             free(h);
         }
         h = tmp;

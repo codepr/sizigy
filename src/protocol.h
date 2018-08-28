@@ -3,25 +3,24 @@
 
 #include <stdio.h>
 #include <stdint.h>
-#include "ringbuf.h"
 
 /* Packet type definition */
-#define CLIENT_PACKET 0x80
-#define SYSTEM_PACKET 0x81
+#define REQUEST   0xfc
+#define RESPONSE  0xfe
 
 /* Operation codes */
-#define HANDSHAKE           0x00
-#define SUBSCRIBE           0x01
-#define UNSUBSCRIBE         0x02
-#define PUBLISH             0x03
-#define QUIT                0x04
-#define ACK                 0x05
-#define NACK                0x06
-#define DATA                0x07
-#define PING                0x08
-#define CLUSTER_JOIN        0x09
-#define CLUSTER_JOIN_ACK    0x0a
-#define REPLICA             0x0b
+#define HANDSHAKE        0x00
+#define SUBSCRIBE        0x01
+#define UNSUBSCRIBE      0x02
+#define PUBLISH          0x03
+#define QUIT             0x04
+#define ACK              0x05
+#define NACK             0x06
+#define DATA             0x07
+#define PING             0x08
+#define CLUSTER_JOIN     0x09
+#define CLUSTER_JOIN_ACK 0x0a
+#define REPLICA          0x0b
 
 /* Deliverance guarantee */
 #define AT_MOST_ONCE  0x00
@@ -44,7 +43,7 @@
 
 
 typedef struct {
-    uint8_t magic;
+    /* uint8_t magic; */
     uint8_t type;
     uint8_t opcode;
     uint32_t data_len;
@@ -77,7 +76,7 @@ typedef struct {
 
 
 typedef struct {
-    uint8_t magic;
+    /* uint8_t magic; */
     uint8_t type;
     uint8_t opcode;
     uint32_t data_len;
@@ -112,13 +111,13 @@ packed_t *pack_request(request_t *);
 int8_t unpack_request(uint8_t *, request_t *);
 packed_t *pack_response(response_t *);
 int8_t unpack_response(uint8_t *, response_t*);
+void free_packed(packed_t *);
 
-
-#define build_ack_req(o, m) (build_ack_request(CLIENT_PACKET, (o), 0, (m)))
-#define build_ack_res(o, m) (build_ack_response(SYSTEM_PACKET, (o), (m)))
-#define build_rep_req(q, c, m) (build_subscribe_request(SYSTEM_PACKET, REPLICA, (q), (c), (m), 0))
-#define build_pub_req(q, c, m) (build_subscribe_request(CLIENT_PACKET, PUBLISH, (q), (c), (m), 0))
-#define build_pub_res(q, c, m, i) (build_publish_response(SYSTEM_PACKET, PUBLISH, (q), (c), (m), (i)))
+#define build_ack_req(o, m) (build_ack_request(REQUEST, (o), 0, (m)))
+#define build_ack_res(o, m) (build_ack_response(RESPONSE, (o), (m)))
+#define build_rep_req(q, c, m) (build_subscribe_request(RESPONSE, REPLICA, (q), (c), (m), 0))
+#define build_pub_req(q, c, m) (build_subscribe_request(REQUEST, PUBLISH, (q), (c), (m), 0))
+#define build_pub_res(q, c, m, i) (build_publish_response(RESPONSE, PUBLISH, (q), (c), (m), (i)))
 
 request_t *build_ack_request(uint8_t, uint8_t, uint64_t, char *);
 request_t *build_handshake_request(uint8_t, uint8_t, uint8_t, char *);

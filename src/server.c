@@ -30,24 +30,37 @@ static int reply_handler(const int, client_t *);
 static int request_handler(const int, client_t *);
 
 
+static int close_socket(void *arg1, void *arg2) {
+    int fd = *(int *) arg1;
+    map_entry *kv = (map_entry *) arg2;
+    struct subscriber *sub = (struct subscriber *) kv->val;
+    if (sub->fd == fd)
+        close(sub->fd);
+    return 0;
+}
+
+
 static int send_data(void *arg1, void *ptr) {
     int ret = 0;
     struct subscriber *sub = (struct subscriber *) ptr;
+
     queue_item *item = (queue_item *) arg1;
     message_t *m = (message_t *) item->data;
     char *channel = append_string(m->channel, " ");
     response_t *r = build_pub_res(m->qos, channel, m->payload, 0);
+
     if (sub->qos > 0)
         r->qos = 1;
     r->id = m->id;
+
     packed_t *p = pack_response(r);
     if (sendall(sub->fd, p->data, p->size, &(ssize_t) { 0 }) < 0) {
         perror("send(2): error sending\n");
         ret = -1;
     }
+
     free(channel);
-    free(p->data);
-    free(p);
+    free_packed(p);
     free(r);
     return ret;
 }
@@ -93,127 +106,180 @@ static int err_handler(client_t *c, const uint8_t errcode) {
 }
 
 
-static int ack_handler(client_t *c, request_t *r) {
+static int ack_handler(client_t *c) {
     c->reply = NULL;
-    uint64_t id = r->id;
+    uint64_t id = 0;
+
+    if (c->type == RESPONSE) id = c->res->id;
+    else return -1;
+
     DEBUG("ACK from %s (id=%ld)", c->id, id);
     /* Remove packet from ACK waiting map_t */
-    map_del(global.ack_waiting, &id);
+    map_del(global.ack_waiting, &id);  // XXX unused for the moment
 
     return -1;
 }
 
 
-static int quit_handler(client_t *c, request_t *r) {
+static int quit_handler(client_t *c) {
     DEBUG("QUIT");
     shutdown(c->fd, 0);
     close(c->fd);
+    map_iterate2(global.channels, close_socket, NULL);
     return -1;
 }
 
 
-static int ping_handler(client_t *c, request_t *r) {
-    add_reply(c, PING_REPLY, r->qos, c->fd, "PONG", NULL);
-    DEBUG("PING from %s", c->id);
+static int ping_handler(client_t *c) {
+    if (c->type == REQUEST) {
+        add_reply(c, PING_REPLY, 0, c->fd, "PONG", NULL);
+        DEBUG("PING from %s", c->id);
+    }
     return 0;
 }
 
 
-static int join_handler(client_t *c, request_t *r) {
-    add_reply(c, JACK_REPLY, r->qos, c->fd, OK, NULL);
-    // XXX for now just insert pointer to client struct
-    global.peers = list_head_insert(global.peers, c);
-    DEBUG("CLUSTER_JOIN request accepted");
+static int join_handler(client_t *c) {
+    if (c->type == REQUEST) {
+        add_reply(c, JACK_REPLY, 0, c->fd, OK, NULL);
+        // XXX for now just insert pointer to client struct
+        global.peers = list_head_insert(global.peers, c);
+        DEBUG("CLUSTER_JOIN request accepted");
+    }
     return 0;
 }
 
 
-static int join_ack_handler(client_t *c, request_t *r) {
-    reply_ok(c, c->fd, r->qos);
-    // XXX for now just insert pointer to client struct
-    global.peers = list_head_insert(global.peers, c);
-    DEBUG("CLUSTER_JOINED cluster");
+static int join_ack_handler(client_t *c) {
+    if (c->type == REQUEST) {
+        reply_ok(c, c->fd, 0);
+        // XXX for now just insert pointer to client struct
+        global.peers = list_head_insert(global.peers, c);
+        DEBUG("CLUSTER_JOINED cluster");
+    }
     return 0;
 }
 
 
-static int handshake_handler(client_t *c, request_t *r) {
-    reply_ok(c, c->fd, r->qos);
-    char *id = append_string("C:", (const char *) r->sub_id);
-    if (r->clean_session == 1) {
-        map_del(global.clients, c->id);
-        map_put(global.clients, id, c);
-        free(c->id);
-        c->id = id;
+static int handshake_handler(client_t *c) {
+
+    if (c->type == REQUEST) {
+        if (c->req->sub_id || c->req->sub_id_len == 0)
+            return err_handler(c, ERR_MISS_ID);
+
+        reply_ok(c, c->fd, c->req->qos);
+
+        char *id = append_string("C:", (const char *) c->req->sub_id);
+        if (c->req->clean_session == 1) {
+            map_del(global.clients, c->id);
+            map_put(global.clients, id, c);
+            free(c->id);
+            c->id = id;
+        } else {
+            /* Should check if global map contains an entry and return an
+               error code in case of failure, for now we just add the new
+               client */
+            map_put(global.clients, id, c);
+        }
+
+        reply_ok(c, c->fd, c->req->qos);
     } else {
-        /* Should check if global map contains an entry and return an
-           error code in case of failure, for now we just add the new
-           client */
-        map_put(global.clients, id, c);
+        reply_ok(c, c->fd, 0);
     }
 
     return 0;
 }
 
 
-static int replica_handler(client_t *c, request_t *r) {
-    reply_ok(c, c->fd, r->qos);
-    void *raw = map_get(global.channels, r->channel);
-    if (!raw) {
-        channel_t *channel = create_channel((char *) r->channel);
-        map_put(global.channels, strdup((char *) r->channel), channel);
+static int replica_handler(client_t *c) {
+    if (c->type == REQUEST) {
+        void *raw = map_get(global.channels, c->req->channel);
+        if (!raw) {
+            channel_t *channel = create_channel((char *) c->req->channel);
+            map_put(global.channels, strdup((char *) c->req->channel), channel);
+        }
+        channel_t *chan = (channel_t *) map_get(global.channels, c->req->channel);
+        /* Add message to the channel */
+        // XXX require new command packet for replica (e.g. save ID etc)
+        store_message(chan, 0, c->req->qos, 0, (char *) c->req->message, 0);
+        reply_ok(c, c->fd, c->req->qos);
+    } else {
+        reply_ok(c, c->fd, 0);
     }
-    channel_t *chan = (channel_t *) map_get(global.channels, r->channel);
-    /* Add message to the channel */
-    // XXX require new command packet for replica (e.g. save ID etc)
-    store_message(chan, 0, r->qos, 0, (char *) r->message, 0);
     DEBUG("REPLICA received");
     return 1;
 }
 
 
-static int publish_message_handler(client_t *c, request_t *r) {
-    add_reply(c, DATA_REPLY, r->qos, c->fd,
-            strdup((char *) r->message), strdup((char *) r->channel));
+static int publish_message_handler(client_t *c) {
+
+    if (c->type == REQUEST) {
+        if (!c->req->channel || c->req->channel_len == 0)
+            return err_handler(c, ERR_MISS_CHAN);
+
+        add_reply(c, DATA_REPLY, c->req->qos, c->fd,
+                strdup((char *) c->req->message), strdup((char *) c->req->channel));
+    } else {
+        reply_ok(c, c->fd, 0);
+    }
+
     return 1;
 }
 
 
-static int subscribe_channel_handler(client_t *c, request_t *r) {
-    reply_ok(c, c->fd, r->qos);
-    DEBUG("SUBSCRIBE %s", r->channel);
-    void *raw = map_get(global.channels, r->channel);
-    if (!raw) {
-        channel_t *channel = create_channel((char *) r->channel);
-        map_put(global.channels, strdup((char *) r->channel), channel);
+static int subscribe_channel_handler(client_t *c) {
+
+    if (c->type == REQUEST) {
+        if (!c->req->channel || c->req->channel_len == 0)
+            return err_handler(c, ERR_MISS_CHAN);
+
+        reply_ok(c, c->fd, c->req->qos);
+
+        DEBUG("SUBSCRIBE id=%s channel=%s qos=%d", c->id, c->req->channel, c->req->qos);
+        void *raw = map_get(global.channels, c->req->channel);
+        if (!raw) {
+            channel_t *channel = create_channel((char *) c->req->channel);
+            map_put(global.channels, strdup((char *) c->req->channel), channel);
+        }
+        channel_t *chan = (channel_t *) map_get(global.channels, c->req->channel);
+
+        struct subscriber *sub = malloc(sizeof(struct subscriber));
+        if (!sub) oom("creating subscriber");
+
+        sub->fd = c->fd;
+        sub->name = c->id;
+        sub->qos = c->req->qos;
+        sub->offset = c->req->offset;
+        add_subscriber(chan, sub);
+        send_queue(chan->messages, sub, send_data);
+
+        list_head_insert(c->subscriptions, chan->name);
+    } else {
+        reply_ok(c, c->fd, 0);
     }
-    channel_t *chan = (channel_t *) map_get(global.channels, r->channel);
-
-    struct subscriber *sub = malloc(sizeof(struct subscriber));
-    if (!sub) oom("creating subscriber");
-
-    sub->fd = c->fd;
-    sub->name = c->id;
-    sub->qos = r->qos;
-    sub->offset = r->offset;
-    add_subscriber(chan, sub);
-    send_queue(chan->messages, sub, send_data);
-
-    list_head_insert(c->subscriptions, chan->name);
 
     return 0;
 }
 
 
-static int unsubscribe_channel_handler(client_t *c, request_t *r) {
-    add_reply(c, ACK_REPLY, r->qos, c->fd, OK, NULL);
-    DEBUG("UNSUBSCRIBE %s", r->channel);
-    void *raw_chan = map_get(global.channels, r->channel);
-    if (raw_chan) {
-        channel_t *chan = (channel_t *) raw_chan;
-        // XXX basic placeholder subscriber
-        struct subscriber sub = { c->fd, AT_MOST_ONCE, 0, c->id };
-        del_subscriber(chan, &sub);
+static int unsubscribe_channel_handler(client_t *c) {
+
+    if (c->type == REQUEST) {
+        if (!c->req->channel || c->req->channel_len == 0)
+            return err_handler(c, ERR_MISS_CHAN);
+
+        add_reply(c, ACK_REPLY, c->req->qos, c->fd, OK, NULL);
+
+        DEBUG("UNSUBSCRIBE id=%s channel=%s", c->id, c->req->channel);
+        void *raw_chan = map_get(global.channels, c->req->channel);
+        if (raw_chan) {
+            channel_t *chan = (channel_t *) raw_chan;
+            // XXX basic placeholder subscriber
+            struct subscriber sub = { c->fd, AT_MOST_ONCE, 0, c->id };
+            del_subscriber(chan, &sub);
+        }
+    } else {
+        reply_ok(c, c->fd, 0);
     }
 
     // TODO remove subscriptions from client
@@ -249,15 +315,6 @@ static void free_reply(reply_t *reply) {
 }
 
 
-/* static int close_socket(void *arg1, void *arg2) { */
-/*     int fd = *(int *) arg1; */
-/*     map_entry *kv = (map_entry *) arg2; */
-/*     struct subscriber *sub = (struct subscriber *) kv->val; */
-/*     if (sub->fd == fd) */
-/*         close(sub->fd); */
-/*     return 0; */
-/* } */
-
 
 static int request_handler(const int epollfd, client_t *client) {
     const int clientfd = client->fd;
@@ -285,8 +342,10 @@ static int request_handler(const int epollfd, client_t *client) {
     /* Read all data to form a packet flag */
     int read_all = -1;
     ssize_t n;
-    /* protocol_packet_t *p = malloc(sizeof(protocol_packet_t)); */
-    request_t *p = malloc(sizeof(request_t));
+
+    response_t res;
+    request_t req;
+    uint8_t type = 0;
 
     /* We must read all incoming bytes till an entire packet is received. This
        is achieved by using a standardized protocol, which send the size of the
@@ -297,21 +356,24 @@ static int request_handler(const int epollfd, client_t *client) {
         /* Read till EAGAIN or EWOULDBLOCK, passing an optional parameter len
            which define the remaining bytes to be read */
         if ((n = recvall(clientfd, rbuf, read_all)) < 0) {
-            free(p);
             return -1;
         }
         if (n == 0) {
-            free(p);
             return 0;
         }
 
         char bytes[ringbuf_size(rbuf)];
         /* Check the header, returning -1 in case of insufficient informations
            about the total packet length and the subsequent payload bytes */
-        read_all = parse_header(rbuf, bytes);
+        read_all = parse_header(rbuf, bytes, &type);
 
-        if (read_all == 0)
-            read_all = unpack_request((uint8_t *) bytes, p);
+        if (read_all == 0) {
+            if (type == REQUEST) {
+                read_all = unpack_request((uint8_t *) bytes, &req);
+            } else if (type == RESPONSE) {
+                read_all = unpack_response((uint8_t *) bytes, &res);
+            }
+        }
 
         if ((time(NULL) - start) > TIMEOUT)
             read_all = 1;
@@ -321,8 +383,17 @@ static int request_handler(const int epollfd, client_t *client) {
     ringbuf_free(rbuf);
 
     if (read_all == 1) {
-        free(p);
         return -1;
+    }
+
+    uint8_t opcode;
+    client->type = type;
+    if (type == REQUEST) {
+        client->req = &req;
+        opcode = req.opcode;
+    } else {
+        client->res = &res;
+        opcode = res.opcode;
     }
 
     int free_reply = -1;
@@ -330,23 +401,22 @@ static int request_handler(const int epollfd, client_t *client) {
 
     // Loop through commands array to find the correct handler
     for (int i = 0; i < commands_len(); i++) {
-        if (commands[i].ctype == p->opcode) {
-            free_reply = commands[i].handler(client, p);
+        if (commands[i].ctype == opcode) {
+            free_reply = commands[i].handler(client);
             executed = 1;
         }
     }
+
     // If no handler is found, it must be an error case
     if (executed == 0) {
-        free_reply = err_handler(client, p->opcode);
+        free_reply = err_handler(client, ERR_UNKNOWN);
     }
-
-    pthread_mutex_lock(&(global.lock));
 
     // Set reply handler as the current context handler
     client->ctx_handler = reply_handler;
 
     // Clean up garbage
-    if (p->opcode != ACK) {
+    if (opcode != ACK) {
         mod_epoll(epollfd, clientfd, EPOLLOUT, client);
     } else {
         client->ctx_handler = request_handler;
@@ -357,44 +427,32 @@ static int request_handler(const int epollfd, client_t *client) {
         }
     }
 
-    pthread_mutex_unlock(&(global.lock));
-
-    if (p->opcode != ACK
-            || p->opcode != PUBLISH
-            || p->opcode != SUBSCRIBE
-            || p->opcode != REPLICA
-            || p->opcode != HANDSHAKE) {
-        free(p->data);
+    /* Clean up heap memory */
+    switch (opcode) {
+        case HANDSHAKE:
+            if (type == REQUEST) free(req.sub_id);
+            break;
+        case UNSUBSCRIBE:
+            if (type == REQUEST) free(req.data);
+            break;
+        case PUBLISH:
+        case SUBSCRIBE:
+            if (type == REQUEST) {
+                free(req.channel);
+                free(req.message);
+            } else {
+                free(res.channel);
+                free(res.message);
+            }
+            break;
+        case ACK:
+        case NACK:
+        case CLUSTER_JOIN:
+        case CLUSTER_JOIN_ACK:
+            if (type == REQUEST) free(req.ack_data);
+            else free(res.data);
+            break;
     }
-    free(p);
-
-    /* if (p->opcode == PUBLISH || p->opcode == REPLICA) { */
-    /*     if (p->type == SYSTEM_PACKET) { */
-    /*         #<{(| free(p->payload); |)}># */
-    /*     } */
-    /*     else { */
-    /*         free(p->data); */
-    /*     } */
-    /*     free(p->pub_packet); */
-    /*     free(comm->a->channel_name); */
-    /*     free(comm->a->message); */
-    /*     free(comm->a); */
-    /* } else if (p->opcode == SUBSCRIBE */
-    /*         || p->opcode == UNSUBSCRIBE */
-    /*         || p->opcode == ACK */
-    /*         || p->opcode == CLUSTER_JOIN */
-    /*         || p->opcode == CLUSTER_JOIN_ACK */
-    /*         || p->opcode == DATA) { */
-    /*     free(comm->b->channel_name); */
-    /*     free(comm->b); */
-    /* } else if (p->opcode == HANDSHAKE) { */
-    /*     free(comm->h->id); */
-    /*     free(comm->h); */
-    /* } else { */
-    /*     free(p->data); */
-    /* } */
-    /* free(comm); */
-    /* free(p); */
 
     return 0;
 }
@@ -420,6 +478,7 @@ static int reply_handler(const int epollfd, client_t *client) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
         }
+        free(join_ack);
     } else if (reply->type == NACK_REPLY) {
         ack->opcode = NACK;
         ack->data = (uint8_t *) reply->data;
@@ -456,8 +515,7 @@ static int reply_handler(const int epollfd, client_t *client) {
         write_atomic(global.throughput, load);
     }
 
-    free(p_ack->data);
-    free(p_ack);
+    free_packed(p_ack);
     free(ack);
 
     if (reply->type == DATA_REPLY)
@@ -520,6 +578,7 @@ static void *worker(void *args) {
                 /* An error has occured on this fd, or the socket is not
                    ready for reading */
                 perror ("epoll_wait(2)");
+                map_iterate2(global.channels, close_socket, NULL);
                 close(evs[i].data.fd);
                 continue;
             } else if (evs[i].data.fd == global.run) {
@@ -542,6 +601,38 @@ exit:
     free(evs);
 
     return NULL;
+}
+
+
+int parse_header(ringbuf_t *rbuf, char *bytearray, uint8_t *type) {
+    /* Check the size of the ring buffer, we need at least the first 5 bytes in
+       order to get the total length of the packet */
+    if (ringbuf_empty(rbuf) || ringbuf_size(rbuf) < (sizeof(uint32_t) + sizeof(uint8_t)))
+        return -1;
+
+    uint8_t *tmp = (uint8_t *) bytearray;
+
+    /* Try to read at least length of the packet */
+    for (uint8_t i = 0; i < sizeof(uint32_t) + sizeof(uint8_t); i++)
+        ringbuf_pop(rbuf, tmp++);
+
+    uint8_t *typ = (uint8_t *) bytearray;
+    uint32_t tlen = *((uint32_t *) (bytearray + sizeof(uint8_t)));
+
+    /* If there's no bytes nr equal to the total size of the packet abort and
+       read again */
+    if (ringbuf_size(rbuf) < tlen - sizeof(uint32_t) - sizeof(uint8_t))
+        return tlen - sizeof(uint32_t) - sizeof(uint8_t) - ringbuf_size(rbuf);
+
+    /* Empty the rest of the ring buffer */
+    while ((tlen - sizeof(uint32_t) - sizeof(uint8_t)) > 0) {
+        ringbuf_pop(rbuf, tmp++);
+        --tlen;
+    }
+
+    *type = *typ;
+
+    return 0;
 }
 
 
@@ -588,43 +679,11 @@ static int destroy_clients(void *t1, void *t2) {
             if (c->reply)
                 free(c->reply);
             if (c->subscriptions)
-                free(c->subscriptions);
+                list_release(c->subscriptions, 0);
         }
     } else return MAP_ERR;
     return MAP_OK;
 }
-
-
-int parse_header(ringbuf_t *rbuf, char *bytearray) {
-    /* Check the size of the ring buffer, we need at least the first 4 bytes in
-       order to get the total length of the packet */
-    if (ringbuf_empty(rbuf) || ringbuf_size(rbuf) < sizeof(uint32_t))
-        return -1;
-
-    uint8_t *tmp = (uint8_t *) bytearray;
-
-    /* Try to read at least length of the packet */
-    for (uint8_t i = 0; i < sizeof(uint32_t); i++)
-        ringbuf_pop(rbuf, tmp++);
-
-    uint8_t *tot = (uint8_t *) bytearray;
-    uint32_t tlen = *((uint32_t *) tot);
-
-    /* If there's no bytes nr equal to the total size of the packet abort and
-       read again */
-    if (ringbuf_size(rbuf) < tlen - sizeof(uint32_t))
-        return tlen - sizeof(uint32_t) - ringbuf_size(rbuf);
-
-    /* Empty the rest of the ring buffer */
-    while ((tlen - sizeof(uint32_t)) > 0) {
-        ringbuf_pop(rbuf, tmp++);
-        --tlen;
-    }
-
-    return 0;
-}
-
-
 
 /*
  * Main entry point for start listening on a socket and running an epoll event
@@ -687,10 +746,10 @@ int start_server(const char *addr, char *port, int node_fd) {
     }
 
     /* Client structure for the server component */
-    client_t server = { ONLINE, fd, accept_handler, "server", NULL, list_create() };
+    client_t server = { REQUEST, ONLINE, fd, accept_handler, "server", NULL, list_create(), { NULL } };
 
     /* And another one for the bus */
-    client_t bus = { ONLINE, bfd, accept_handler, "bus", NULL, list_create() };
+    client_t bus = { REQUEST, ONLINE, bfd, accept_handler, "bus", NULL, list_create(), { NULL } };
 
     /* Set socket in EPOLLIN flag mode, ready to read data */
     add_epoll(epollfd, fd, &server);
@@ -717,19 +776,18 @@ int start_server(const char *addr, char *port, int node_fd) {
     INFO("Sizigy v0.1.0");
     INFO("Starting server on %s:%s", addr, port);
 
-    client_t node = { ONLINE, node_fd, request_handler, "node", NULL, list_create() };
+    client_t node = { REQUEST, ONLINE, node_fd, request_handler, "node", NULL, list_create(), { NULL } };
     /* Add eventual connected node */
     if (node_fd > 0) {
         add_epoll(bepollfd, node_fd, &node);
         /* Ask for joining the cluster */
-        /* protocol_packet_t *join_req_packet = build_response_ack(CLUSTER_JOIN, OK); */
         request_t *join_req_packet = build_ack_req(CLUSTER_JOIN, OK);
         packed_t *p = pack_request(join_req_packet);
         int rc = sendall(node_fd, p->data, p->size, &(ssize_t) { 0 });
         if (rc < 0)
             printf("Failed join\n");
         free(join_req_packet);
-        free(p);
+        free_packed(p);
     }
 
     /* Use main thread as a worker too */
