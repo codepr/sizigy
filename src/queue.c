@@ -86,10 +86,10 @@ int send_queue(queue_t *q, void *ptr, sendfunc f) {
     /* Dirty hack that works as a MVP solution */
     struct subscriber *sub = (struct subscriber *) ptr;
     int ret = 0;
-    int64_t n = q->len;
+    uint64_t n = q->len;
     queue_item *item = q->front;
     while (item) {
-        if (n <= sub->offset || sub->offset > q->len || sub->offset == -1)
+        if (n <= sub->offset || sub->offset > q->len || sub->offset == 0)
             ret = f(item, ptr);
         item = item->next;
         n--;

@@ -43,7 +43,6 @@
 
 
 typedef struct {
-    /* uint8_t magic; */
     uint8_t type;
     uint8_t opcode;
     uint32_t data_len;
@@ -59,7 +58,7 @@ typedef struct {
             uint16_t channel_len;
             uint32_t message_len;
             uint8_t qos;
-            int64_t offset;
+            uint64_t offset;
             uint8_t *channel;
             uint8_t *message;
         };
@@ -76,7 +75,6 @@ typedef struct {
 
 
 typedef struct {
-    /* uint8_t magic; */
     uint8_t type;
     uint8_t opcode;
     uint32_t data_len;

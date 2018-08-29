@@ -35,4 +35,7 @@ void mod_epoll(const int, const int, const int, void *);
 int sendall(const int, uint8_t *, ssize_t, ssize_t *);
 int recvall(const int, ringbuf_t *, ssize_t);
 
+void htonll(uint8_t *, uint_least64_t );
+uint_least64_t ntohll(const uint8_t *);
+
 #endif

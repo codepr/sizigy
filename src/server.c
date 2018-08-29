@@ -30,6 +30,8 @@ static int reply_handler(const int, client_t *);
 static int request_handler(const int, client_t *);
 
 
+/* Used to clean up disconnected clients for whatever reason from the subscriptions or global
+   connected peer */
 static int close_socket(void *arg1, void *arg2) {
     int fd = *(int *) arg1;
     map_entry *kv = (map_entry *) arg2;
@@ -39,7 +41,8 @@ static int close_socket(void *arg1, void *arg2) {
     return 0;
 }
 
-
+/* Send a define nr of messages already published in the channel of choice, based on an offset
+   defined in the subscription request */
 static int send_data(void *arg1, void *ptr) {
     int ret = 0;
     struct subscriber *sub = (struct subscriber *) ptr;
@@ -65,8 +68,9 @@ static int send_data(void *arg1, void *ptr) {
     return ret;
 }
 
-
-static void add_reply(client_t *c, uint8_t type, uint8_t qos, const int fd, char *data, char *channel) {
+/* Build a reply object and link it to the client_t pointer */
+static void add_reply(client_t *c, uint8_t type,
+        uint8_t qos, const int fd, char *data, char *channel) {
 
     reply_t *r = malloc(sizeof(reply_t));
     if (!r) oom("adding reply");
@@ -122,10 +126,11 @@ static int ack_handler(client_t *c) {
 
 
 static int quit_handler(client_t *c) {
-    DEBUG("QUIT");
     shutdown(c->fd, 0);
     close(c->fd);
+    /* Close all fds passed around the structures */
     map_iterate2(global.channels, close_socket, NULL);
+    DEBUG("QUIT %s", c->id);
     return -1;
 }
 
@@ -133,7 +138,7 @@ static int quit_handler(client_t *c) {
 static int ping_handler(client_t *c) {
     if (c->type == REQUEST) {
         add_reply(c, PING_REPLY, 0, c->fd, "PONG", NULL);
-        DEBUG("PING from %s", c->id);
+        DEBUG("PING %s", c->id);
     }
     return 0;
 }
@@ -149,7 +154,7 @@ static int join_handler(client_t *c) {
     return 0;
 }
 
-
+/* TODO Should be removed, or at least incorporated with join_handler as a response */
 static int join_ack_handler(client_t *c) {
     if (c->type == REQUEST) {
         reply_ok(c, c->fd, 0);
@@ -251,9 +256,12 @@ static int subscribe_channel_handler(client_t *c) {
         sub->qos = c->req->qos;
         sub->offset = c->req->offset;
         add_subscriber(chan, sub);
+
+        /* Send requsted nr. of already published messages, 0 as offset means all previous messages */
         send_queue(chan->messages, sub, send_data);
 
         list_head_insert(c->subscriptions, chan->name);
+
     } else {
         reply_ok(c, c->fd, 0);
     }
@@ -287,8 +295,8 @@ static int unsubscribe_channel_handler(client_t *c) {
     return 0;
 }
 
-
-static struct command commands[] = {
+/* Static command map */
+static struct command commands_map[] = {
     {ACK, ack_handler},
     {QUIT, quit_handler},
     {PING, ping_handler},
@@ -302,8 +310,8 @@ static struct command commands[] = {
 };
 
 
-int commands_len(void) {
-    return sizeof(commands) / sizeof(struct command);
+static int commands_map_len(void) {
+    return sizeof(commands_map) / sizeof(struct command);
 }
 
 
@@ -314,8 +322,7 @@ static void free_reply(reply_t *reply) {
         free(reply->channel);
 }
 
-
-
+/* Handle incoming requests, after being accepted or after a reply */
 static int request_handler(const int epollfd, client_t *client) {
     const int clientfd = client->fd;
 
@@ -343,6 +350,8 @@ static int request_handler(const int epollfd, client_t *client) {
     int read_all = -1;
     ssize_t n;
 
+    /* Placeholders structures, at this point we still don't know if we got a
+       request or a response */
     response_t res;
     request_t req;
     uint8_t type = 0;
@@ -388,6 +397,9 @@ static int request_handler(const int epollfd, client_t *client) {
 
     uint8_t opcode;
     client->type = type;
+
+    /* Link the correct structure to the client, according to the packet type
+       received */
     if (type == REQUEST) {
         client->req = &req;
         opcode = req.opcode;
@@ -399,10 +411,10 @@ static int request_handler(const int epollfd, client_t *client) {
     int free_reply = -1;
     int executed = 0;
 
-    // Loop through commands array to find the correct handler
-    for (int i = 0; i < commands_len(); i++) {
-        if (commands[i].ctype == opcode) {
-            free_reply = commands[i].handler(client);
+    // Loop through commands_map array to find the correct handler
+    for (int i = 0; i < commands_map_len(); i++) {
+        if (commands_map[i].ctype == opcode) {
+            free_reply = commands_map[i].handler(client);
             executed = 1;
         }
     }
@@ -415,7 +427,7 @@ static int request_handler(const int epollfd, client_t *client) {
     // Set reply handler as the current context handler
     client->ctx_handler = reply_handler;
 
-    // Clean up garbage
+    // Set up epoll events
     if (opcode != ACK) {
         mod_epoll(epollfd, clientfd, EPOLLOUT, client);
     } else {
@@ -457,7 +469,8 @@ static int request_handler(const int epollfd, client_t *client) {
     return 0;
 }
 
-
+/* Handle reply state, after a request/response has been processed in
+   request_handler routine */
 static int reply_handler(const int epollfd, client_t *client) {
     reply_t *reply = client->reply;
     int ret = 0;
@@ -502,12 +515,15 @@ static int reply_handler(const int epollfd, client_t *client) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
         }
+
         void *raw_subs = map_get(global.channels, reply->channel);
         if (!raw_subs) {
             channel_t *channel = create_channel(reply->channel);
             map_put(global.channels, strdup(reply->channel), channel);
         }
+        /* Retrieve the channel to publish data to by name */
         channel_t *chan = (channel_t *) map_get(global.channels, reply->channel);
+
         double tic = clock();
         sent = publish_message(chan, reply->qos, strdup(reply->data), 0);
         double elapsed = (clock() - tic) /CLOCKS_PER_SEC;
@@ -523,12 +539,14 @@ static int reply_handler(const int epollfd, client_t *client) {
     free(reply);
 
     client->reply = NULL;
+    /* Set up EPOLL event for read fds */
     client->ctx_handler = request_handler;
     mod_epoll(epollfd, client->fd, EPOLLIN, client);
     return ret;
 }
 
-
+/* Handle new connection, create a a fresh new client_t structure and link it
+   to the fd, ready to be set in EPOLLIN event */
 static int accept_handler(const int epollfd, client_t *server) {
     const int fd = server->fd;
     /* Accept the connection */
@@ -543,12 +561,15 @@ static int accept_handler(const int epollfd, client_t *server) {
     client->status = ONLINE;
     client->fd = clientsock;
     client->ctx_handler = request_handler;
+
     const char *id = random_name(16);
     char *name = append_string("C:", id);  // C states that it is a client (could be another sizigy instance)
     free((void *) id);
+
     client->id = name;
     client->reply = NULL;
     client->subscriptions = list_create();
+
     /* Add new accepted server to the global map */
     map_put(global.clients, name, client);
     /* Add it to the epoll loop */
@@ -558,7 +579,8 @@ static int accept_handler(const int epollfd, client_t *server) {
     return 0;
 }
 
-
+/* Main worker function, his responsibility is to wait on events on a shared
+   EPOLL fd, use the same way for clients or peer to distribute messages */
 static void *worker(void *args) {
     struct socks *fds = (struct socks *) args;
     struct epoll_event *evs = malloc(sizeof(*evs) * MAX_EVENTS);
@@ -603,7 +625,8 @@ exit:
     return NULL;
 }
 
-
+/* Parse header, require at least the first 5 bytes in order to read packet
+   type and total length that we need to recv to complete the packet */
 int parse_header(ringbuf_t *rbuf, char *bytearray, uint8_t *type) {
     /* Check the size of the ring buffer, we need at least the first 5 bytes in
        order to get the total length of the packet */
@@ -617,7 +640,7 @@ int parse_header(ringbuf_t *rbuf, char *bytearray, uint8_t *type) {
         ringbuf_pop(rbuf, tmp++);
 
     uint8_t *typ = (uint8_t *) bytearray;
-    uint32_t tlen = *((uint32_t *) (bytearray + sizeof(uint8_t)));
+    uint32_t tlen = ntohl(*((uint32_t *) (bytearray + sizeof(uint8_t))));
 
     /* If there's no bytes nr equal to the total size of the packet abort and
        read again */
