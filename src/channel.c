@@ -63,7 +63,7 @@ void store_message(channel_t *channel, const uint64_t id,
     if (check_peers == 1 && global.peers->len > 0) {
         char *m = append_string(channel->name, " ");
         request_t *replica_r = build_rep_req(qos, m, (char *) payload);
-        replica_r->id = id;
+        replica_r->offset = id;
         packed_t *p = pack_request(replica_r);
         list_node *cur = global.peers->head;
 

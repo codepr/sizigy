@@ -113,7 +113,7 @@ void free_packed(packed_t *);
 
 #define build_ack_req(o, m) (build_ack_request(REQUEST, (o), 0, (m)))
 #define build_ack_res(o, m) (build_ack_response(RESPONSE, (o), (m)))
-#define build_rep_req(q, c, m) (build_subscribe_request(RESPONSE, REPLICA, (q), (c), (m), 0))
+#define build_rep_req(q, c, m) (build_subscribe_request(REQUEST, REPLICA, (q), (c), (m), 0))
 #define build_pub_req(q, c, m) (build_subscribe_request(REQUEST, PUBLISH, (q), (c), (m), 0))
 #define build_pub_res(q, c, m, i) (build_publish_response(RESPONSE, PUBLISH, (q), (c), (m), (i)))
 

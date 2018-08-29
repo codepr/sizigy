@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
     if (optind < argc) {
         if (strncasecmp(argv[optind], "join", strlen(argv[optind])) == 0) {
             char *target = argv[optind + 1];
-            int tport = atoi(argv[optind + 2]);
+            int tport = atoi(argv[optind + 2]) + 10000;
 
             fd = make_connection(target, tport);
             set_nonblocking(fd);

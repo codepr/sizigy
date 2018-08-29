@@ -52,6 +52,7 @@ static int send_data(void *arg1, void *ptr) {
     char *channel = append_string(m->channel, " ");
     response_t *r = build_pub_res(m->qos, channel, m->payload, 0);
 
+    /* Set QOS according to subscriber QOS */
     if (sub->qos > 0)
         r->qos = 1;
     r->id = m->id;
@@ -118,6 +119,7 @@ static int ack_handler(client_t *c) {
     else return -1;
 
     DEBUG("ACK from %s (id=%ld)", c->id, id);
+
     /* Remove packet from ACK waiting map_t */
     map_del(global.ack_waiting, &id);  // XXX unused for the moment
 
@@ -126,8 +128,10 @@ static int ack_handler(client_t *c) {
 
 
 static int quit_handler(client_t *c) {
+
     shutdown(c->fd, 0);
     close(c->fd);
+
     /* Close all fds passed around the structures */
     map_iterate2(global.channels, close_socket, NULL);
     DEBUG("QUIT %s", c->id);
@@ -146,10 +150,13 @@ static int ping_handler(client_t *c) {
 
 static int join_handler(client_t *c) {
     if (c->type == REQUEST) {
-        add_reply(c, JACK_REPLY, 0, c->fd, OK, NULL);
+
+        /* XXX Dirty hack: Request of client contains the client bus listening port */
+        add_reply(c, JACK_REPLY, 0, c->fd, c->id, (char *) c->req->ack_data);
+
         // XXX for now just insert pointer to client struct
         global.peers = list_head_insert(global.peers, c);
-        DEBUG("CLUSTER_JOIN request accepted");
+        DEBUG("CLUSTER_JOIN from %s at %s:%s request accepted", c->id, c->addr, c->req->ack_data);
     }
     return 0;
 }
@@ -158,9 +165,46 @@ static int join_handler(client_t *c) {
 static int join_ack_handler(client_t *c) {
     if (c->type == REQUEST) {
         reply_ok(c, c->fd, 0);
+
         // XXX for now just insert pointer to client struct
         global.peers = list_head_insert(global.peers, c);
-        DEBUG("CLUSTER_JOINED cluster");
+        DEBUG("Joined cluster, new member at: %s", c->req->ack_data);
+
+        /* Extract hostname and port from the ack payload in order to connect
+           to the new member */
+        char *member = (char *) c->req->ack_data;
+        char *mhost = strtok(member, ":");
+        char *mport = strtok(NULL, "\0");
+
+        /* Connect to the new member */
+        int fd =  make_connection(mhost, atoi(mport));
+        set_nonblocking(fd);
+
+        /* Add it to a client structure */
+        client_t *client = malloc(sizeof(client_t));
+        client->status = ONLINE;
+        client->addr = strdup(mhost);
+        client->fd = fd;
+        client->ctx_handler = request_handler;
+
+        const char *id = random_name(16);
+        char *name = append_string("C:", id);  // C states that it is a client (could be another sizigy instance)
+        free((void *) id);
+
+        client->id = name;
+        client->reply = NULL;
+        client->subscriptions = list_create();
+
+        global.peers = list_head_insert(global.peers, client);
+
+        /* Add new accepted server to the global map */
+        map_put(global.clients, name, client);
+        /* Add it to the epoll loop */
+        add_epoll(global.bepollfd, fd, client);
+
+        free(mhost);
+    } else {
+        reply_ok(c, c->fd, 0);
     }
     return 0;
 }
@@ -198,20 +242,25 @@ static int handshake_handler(client_t *c) {
 
 static int replica_handler(client_t *c) {
     if (c->type == REQUEST) {
+
         void *raw = map_get(global.channels, c->req->channel);
         if (!raw) {
             channel_t *channel = create_channel((char *) c->req->channel);
             map_put(global.channels, strdup((char *) c->req->channel), channel);
         }
         channel_t *chan = (channel_t *) map_get(global.channels, c->req->channel);
+
         /* Add message to the channel */
         // XXX require new command packet for replica (e.g. save ID etc)
         store_message(chan, 0, c->req->qos, 0, (char *) c->req->message, 0);
         reply_ok(c, c->fd, c->req->qos);
+
+        DEBUG("REPLICA channel=%s id=%d qos=%d message=%s",
+                c->req->channel, c->req->offset, c->req->qos, c->req->message);
     } else {
+        DEBUG("REPLICA response");
         reply_ok(c, c->fd, 0);
     }
-    DEBUG("REPLICA received");
     return 1;
 }
 
@@ -257,7 +306,8 @@ static int subscribe_channel_handler(client_t *c) {
         sub->offset = c->req->offset;
         add_subscriber(chan, sub);
 
-        /* Send requsted nr. of already published messages, 0 as offset means all previous messages */
+        /* Send requsted nr. of already published messages, 0 as offset means
+           all previous messages */
         send_queue(chan->messages, sub, send_data);
 
         list_head_insert(c->subscriptions, chan->name);
@@ -280,8 +330,10 @@ static int unsubscribe_channel_handler(client_t *c) {
 
         DEBUG("UNSUBSCRIBE id=%s channel=%s", c->id, c->req->channel);
         void *raw_chan = map_get(global.channels, c->req->channel);
+
         if (raw_chan) {
             channel_t *chan = (channel_t *) raw_chan;
+
             // XXX basic placeholder subscriber
             struct subscriber sub = { c->fd, AT_MOST_ONCE, 0, c->id };
             del_subscriber(chan, &sub);
@@ -333,18 +385,6 @@ static int request_handler(const int epollfd, client_t *client) {
        size of chunks of data which can result in partially formed packets or
        overlapping as well */
     ringbuf_t *rbuf = ringbuf_init(buffer, ONEMB * 2);
-
-    struct sockaddr_in addr;
-    socklen_t addrlen = sizeof(addr);
-
-    if (getpeername(clientfd, (struct sockaddr *) &addr, &addrlen) < 0) {
-        return -1;
-    }
-
-    char ip_buff[INET_ADDRSTRLEN + 1];
-    if (inet_ntop(AF_INET, &addr.sin_addr, ip_buff, sizeof(ip_buff)) == NULL) {
-        return -1;
-    }
 
     /* Read all data to form a packet flag */
     int read_all = -1;
@@ -447,6 +487,7 @@ static int request_handler(const int epollfd, client_t *client) {
         case UNSUBSCRIBE:
             if (type == REQUEST) free(req.data);
             break;
+        case REPLICA:
         case PUBLISH:
         case SUBSCRIBE:
             if (type == REQUEST) {
@@ -459,8 +500,6 @@ static int request_handler(const int epollfd, client_t *client) {
             break;
         case ACK:
         case NACK:
-        case CLUSTER_JOIN:
-        case CLUSTER_JOIN_ACK:
             if (type == REQUEST) free(req.ack_data);
             else free(res.data);
             break;
@@ -472,9 +511,13 @@ static int request_handler(const int epollfd, client_t *client) {
 /* Handle reply state, after a request/response has been processed in
    request_handler routine */
 static int reply_handler(const int epollfd, client_t *client) {
+
     reply_t *reply = client->reply;
     int ret = 0;
     ssize_t sent;
+
+    /* Alloc on the heap a ACK response, will be manipulated according to the
+       case of use */
     response_t *ack = build_ack_res(ACK, (uint8_t *) OK);
     packed_t *p_ack = NULL;
 
@@ -485,8 +528,45 @@ static int reply_handler(const int epollfd, client_t *client) {
             ret = -1;
         }
     } else if (reply->type == JACK_REPLY) {
-        request_t *join_ack = build_ack_req(CLUSTER_JOIN_ACK, OK);
-        p_ack = pack_request(join_ack);
+
+        /* Dirty hack: we should now send host:port pairs in order to update
+           all the cluster with the new member, excluding the self and himself */
+        /* So first we retrive the id of the newly joined member */
+        char *new_member_id = reply->data;
+        char *new_member_port = reply->channel;
+
+        /* Next we must populate the string with the host:port pairs */
+        list_node *cur = global.peers->head;
+
+        while (cur) {
+
+            client_t *cli = (client_t *) cur->data;
+            if (strcasecmp(cli->id, new_member_id) != 0) {
+
+                /* Make string host:pair, this one will be sent to all matching peers, e.g. all
+                   other that are no aware of the new joined member */
+                char *hostcolon = append_string(client->addr, ":");
+                char *pair = append_string(hostcolon, new_member_port);
+
+                /* Pack request and send it to other peers so they can connect to the new member */
+                request_t *join_ack = build_ack_req(CLUSTER_JOIN_ACK, pair);
+                p_ack = pack_request(join_ack);
+
+                if ((sendall(cli->fd, p_ack->data, p_ack->size, &sent)) < 0) {
+                    perror("send(2): can't write on socket descriptor");
+                    ret = -1;
+                }
+
+                free(pair);
+                free(hostcolon);
+                free(join_ack);
+            }
+            cur = cur->next;
+        }
+
+        /* Send an OK ACK to the original sender */
+        response_t *join_ack = build_ack_res(CLUSTER_JOIN_ACK, (uint8_t *) OK);
+        p_ack = pack_response(join_ack);
         if ((sendall(reply->fd, p_ack->data, p_ack->size, &sent)) < 0) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
@@ -539,6 +619,7 @@ static int reply_handler(const int epollfd, client_t *client) {
     free(reply);
 
     client->reply = NULL;
+
     /* Set up EPOLL event for read fds */
     client->ctx_handler = request_handler;
     mod_epoll(epollfd, client->fd, EPOLLIN, client);
@@ -549,16 +630,39 @@ static int reply_handler(const int epollfd, client_t *client) {
    to the fd, ready to be set in EPOLLIN event */
 static int accept_handler(const int epollfd, client_t *server) {
     const int fd = server->fd;
+
     /* Accept the connection */
     int clientsock = accept_connection(fd);
+
     /* Abort if not accepted */
     if (clientsock == -1)
         return -1;
+
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
+
+    if (getpeername(clientsock, (struct sockaddr *) &addr, &addrlen) < 0) {
+        return -1;
+    }
+
+    char ip_buff[INET_ADDRSTRLEN + 1];
+    if (inet_ntop(AF_INET, &addr.sin_addr, ip_buff, sizeof(ip_buff)) == NULL) {
+        return -1;
+    }
+
+    struct sockaddr_in sin;
+    socklen_t sinlen = sizeof(sin);
+
+    if (getsockname(fd, (struct sockaddr *) &sin, &sinlen) < 0) {
+        return -1;
+    }
+
     /* Create a server structure to handle his context connection */
     client_t *client = malloc(sizeof(client_t));
     if (!client) oom("creating client during accept");
 
     client->status = ONLINE;
+    client->addr = strdup(ip_buff);
     client->fd = clientsock;
     client->ctx_handler = request_handler;
 
@@ -570,12 +674,20 @@ static int accept_handler(const int epollfd, client_t *server) {
     client->reply = NULL;
     client->subscriptions = list_create();
 
+    /* If the socket is listening in the bus port, add the connection to the peers */
+    if (sin.sin_port == global.bus_port) {
+        global.peers = list_head_insert(global.peers, client);
+    }
+
     /* Add new accepted server to the global map */
     map_put(global.clients, name, client);
+
     /* Add it to the epoll loop */
     add_epoll(epollfd, clientsock, client);
+
     /* Rearm server fd to accept new connections */
     mod_epoll(epollfd, fd, EPOLLIN, server);
+
     return 0;
 }
 
@@ -593,21 +705,27 @@ static void *worker(void *args) {
     int events_cnt;
     while ((events_cnt = epoll_wait(fds->epollfd, evs, MAX_EVENTS, -1)) > 0) {
         for (int i = 0; i < events_cnt; i++) {
+
             /* Check for errors first */
             if ((evs[i].events & EPOLLERR) ||
                     (evs[i].events & EPOLLHUP) ||
                     (!(evs[i].events & EPOLLIN) && !(evs[i].events & EPOLLOUT))) {
+
                 /* An error has occured on this fd, or the socket is not
                    ready for reading */
                 perror ("epoll_wait(2)");
                 map_iterate2(global.channels, close_socket, NULL);
+
                 close(evs[i].data.fd);
                 continue;
             } else if (evs[i].data.fd == global.run) {
+
                 /* And quit event after that */
                 eventfd_t val;
                 eventfd_read(global.run, &val);
+
                 DEBUG("Stopping epoll loop. Thread %p exiting.", (void *) pthread_self());
+
                 goto exit;
             } else {
                 /* Finally handle the request according to its type */
@@ -628,6 +746,7 @@ exit:
 /* Parse header, require at least the first 5 bytes in order to read packet
    type and total length that we need to recv to complete the packet */
 int parse_header(ringbuf_t *rbuf, char *bytearray, uint8_t *type) {
+
     /* Check the size of the ring buffer, we need at least the first 5 bytes in
        order to get the total length of the packet */
     if (ringbuf_empty(rbuf) || ringbuf_size(rbuf) < (sizeof(uint32_t) + sizeof(uint8_t)))
@@ -746,11 +865,13 @@ int start_server(const char *addr, char *port, int node_fd) {
     /* Initialize the sockets, first the server one */
     const int fd = make_listen(addr, port);
 
-    char bus_port[6];
+    /* Add 10k to the listening server port */
+    int bport = atoi(port) + 10000;
+    char bus_port[12];
+    snprintf(bus_port, sizeof(bus_port), "%d", bport);
 
-    bus_port[0] = '1';
-    strncpy(bus_port+1, port, sizeof(bus_port) - 2);
-    bus_port[5] = '\0';
+    /* Add the bus port to the global shared structure */
+    global.bus_port = bport;
 
     /* The bus one for distribution */
     const int bfd = make_listen(addr, bus_port);
@@ -769,16 +890,18 @@ int start_server(const char *addr, char *port, int node_fd) {
     }
 
     /* Client structure for the server component */
-    client_t server = { REQUEST, ONLINE, fd, accept_handler, "server", NULL, list_create(), { NULL } };
+    client_t server = { REQUEST, ONLINE, addr, fd, accept_handler, "server", NULL, list_create(), { NULL } };
 
     /* And another one for the bus */
-    client_t bus = { REQUEST, ONLINE, bfd, accept_handler, "bus", NULL, list_create(), { NULL } };
+    client_t bus = { REQUEST, ONLINE, addr, bfd, accept_handler, "bus", NULL, list_create(), { NULL } };
 
     /* Set socket in EPOLLIN flag mode, ready to read data */
     add_epoll(epollfd, fd, &server);
 
     /* Set bus socket in EPOLLIN too */
     add_epoll(bepollfd, bfd, &bus);
+
+    global.bepollfd = bepollfd;
 
     /* Bus dedicated thread */
     pthread_t bus_worker;
@@ -799,12 +922,12 @@ int start_server(const char *addr, char *port, int node_fd) {
     INFO("Sizigy v0.1.0");
     INFO("Starting server on %s:%s", addr, port);
 
-    client_t node = { REQUEST, ONLINE, node_fd, request_handler, "node", NULL, list_create(), { NULL } };
+    client_t node = { REQUEST, ONLINE, addr, node_fd, request_handler, "node", NULL, list_create(), { NULL } };
     /* Add eventual connected node */
     if (node_fd > 0) {
         add_epoll(bepollfd, node_fd, &node);
         /* Ask for joining the cluster */
-        request_t *join_req_packet = build_ack_req(CLUSTER_JOIN, OK);
+        request_t *join_req_packet = build_ack_req(CLUSTER_JOIN, bus_port);
         packed_t *p = pack_request(join_req_packet);
         int rc = sendall(node_fd, p->data, p->size, &(ssize_t) { 0 });
         if (rc < 0)
@@ -819,6 +942,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     for (int i = 0; i < EPOLL_WORKERS; ++i)
         pthread_join(workers[i], NULL);
 
+    /* Dedicated thread to bus communications, e.g. distribution */
     pthread_join(bus_worker, NULL);
 
 cleanup:
@@ -829,7 +953,8 @@ cleanup:
     free(server.subscriptions);
     free(bus.subscriptions);
     free(node.subscriptions);
-    free(global.peers);
+    list_release(global.peers, 1);
+    /* free(global.peers); */
     free(global.next_id);
     free(global.throughput);
     free(global.throttler);

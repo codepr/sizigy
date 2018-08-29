@@ -20,8 +20,10 @@ static uint8_t *pack_header(uint8_t type,
     uint8_t *typ = raw;
     uint8_t *tot = raw + sizeof(uint8_t);
     uint8_t *opcod = tot + sizeof(uint32_t);
+
     // fix index just after size of the data part
     uint8_t *datal = opcod + sizeof(uint8_t);
+
     // pack the whole structure
     *typ = type;
     *((uint32_t *) tot) = htonl(total_len);
@@ -52,16 +54,20 @@ static void pack_subscribe_packet(uint8_t *ptr, uint8_t qos,
 
     assert(ptr);
 
+    /* Set position pointers first */
     uint8_t *channel_len = ptr;
     uint8_t *message_len = ptr + sizeof(uint16_t);
     uint8_t *q = message_len + sizeof(uint32_t);
     uint8_t *off = q + sizeof(uint8_t);
     uint8_t *chan = off + sizeof(uint64_t);
     uint8_t *mex = chan + clen;
+
+    /* Assign values to them */
     *((uint16_t *) channel_len) = htons(clen);
     *((uint32_t *) message_len) = htonl(mlen);
     *q = qos;
     htonll(off, offset);
+
     memcpy(chan, channel, clen);
     memcpy(mex, message, mlen);
 }
@@ -88,6 +94,7 @@ packed_t *pack_request(request_t *request) {
 
     packed_t *packed = malloc(sizeof(packed_t));
     if (!packed) oom("packing protocol_packet");
+
     /* 2 unsigned char fields and 1 unsigned integer for len + another 1 for total len */
     uint32_t hdrlen = (2 * sizeof(uint8_t)) + (2 * sizeof(uint32_t));
 
@@ -193,6 +200,7 @@ packed_t *pack_response(response_t *response) {
 
     packed_t *packed = malloc(sizeof(packed_t));
     if (!packed) oom("packing protocol_packet");
+
     /* 2 unsigned char fields and 1 unsigned integer for len + another 1 for total len */
     uint32_t headerlen = (2 * sizeof(uint8_t)) + (2 * sizeof(uint32_t));
 

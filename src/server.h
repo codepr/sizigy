@@ -40,6 +40,7 @@ typedef struct reply reply_t;
 struct client {
     uint8_t type;
     uint8_t status;
+    const char *addr;
     int fd;
     int (*ctx_handler)(int, client_t *);
     char *id;
@@ -78,6 +79,10 @@ struct global {
     uint8_t run;
     /* Logging level, to be set by reading configuration */
     uint8_t loglevel;
+    /* Bus listening port, for peers connections */
+    int bus_port;
+    /* Bus epoll fd */
+    int bepollfd;
     /* Atomic auto-increment unsigned long long int to get the next message ID */
     atomic_t *next_id;
     /* Channels mapping */

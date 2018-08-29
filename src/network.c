@@ -230,7 +230,7 @@ void mod_epoll(const int efd, const int fd, const int evs, void *data) {
     }
 }
 
-//host-to-network (native endian to big endian)
+/* Host-to-network (native endian to big endian) */
 void htonll(uint8_t *block, uint_least64_t num) {
     block[0]=num>>56&0xFF;
     block[1]=num>>48&0xFF;
@@ -242,7 +242,7 @@ void htonll(uint8_t *block, uint_least64_t num) {
     block[7]=num>>0&0xFF;
 }
 
-//network-to-host (big endian to native endian)
+/* Network-to-host (big endian to native endian) */
 uint_least64_t ntohll(const uint8_t *block) {
     return (uint_least64_t)block[0]<<56|
            (uint_least64_t)block[1]<<48|
