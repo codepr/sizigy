@@ -111,9 +111,12 @@ packed_t *pack_request(request_t *request) {
         case REPLICA:
         case PUBLISH:
         case SUBSCRIBE:
-            tlen = hdrlen + sizeof(uint16_t) + sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint64_t) + request->channel_len + request->message_len;
+            tlen = hdrlen + sizeof(uint16_t) + sizeof(uint8_t) + \
+                   sizeof(uint32_t) + sizeof(uint64_t) + \
+                   request->channel_len + request->message_len;
             hdr = pack_header(request->type, request->opcode, request->data_len, tlen);
-            pack_subscribe_packet(hdr + hdrlen, request->qos, request->offset, request->channel_len, request->message_len, request->channel, request->message);
+            pack_subscribe_packet(hdr + hdrlen, request->qos, request->offset,
+                    request->channel_len, request->message_len, request->channel, request->message);
             break;
         case ACK:
         case CLUSTER_JOIN:
