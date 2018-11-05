@@ -1,3 +1,31 @@
+/*
+ * BSD 2-Clause License
+ *
+ * Copyright (c) 2018, Andrea Giacomo Baldan
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
@@ -38,8 +66,8 @@ char *append_string(const char *s1, const char *s2) {
 }
 
 
-throttler_t *init_throttler(void) {
-    throttler_t *t = malloc(sizeof(throttler_t));
+Throttler *init_throttler(void) {
+    Throttler *t = malloc(sizeof(Throttler));
     t->us = 0;
     t->start = 0.0;
     pthread_mutex_init(&(t->lock), NULL);
@@ -47,7 +75,7 @@ throttler_t *init_throttler(void) {
 }
 
 
-void throttler_set_us(throttler_t *t, const uint64_t us) {
+void throttler_set_us(Throttler *t, const uint64_t us) {
     pthread_mutex_lock(&(t->lock));
     t->us = us;
     t->start = clock();
@@ -55,7 +83,7 @@ void throttler_set_us(throttler_t *t, const uint64_t us) {
 }
 
 
-uint64_t throttler_get_us(throttler_t *t) {
+uint64_t throttler_get_us(Throttler *t) {
     pthread_mutex_lock(&(t->lock));
     uint64_t us = t->us;
     pthread_mutex_unlock(&(t->lock));
@@ -63,7 +91,7 @@ uint64_t throttler_get_us(throttler_t *t) {
 }
 
 
-double throttler_t_get_start(throttler_t *t) {
+double Throttler_get_start(Throttler *t) {
     pthread_mutex_lock(&(t->lock));
     double start = t->start;
     pthread_mutex_unlock(&(t->lock));
@@ -71,34 +99,34 @@ double throttler_t_get_start(throttler_t *t) {
 }
 
 
-atomic_t *init_atomic(void) {
-    atomic_t *a = malloc(sizeof(atomic_t));
+Atomic *init_atomic(void) {
+    Atomic *a = malloc(sizeof(Atomic));
     a->value = 0;
     pthread_mutex_init(&(a->lock), NULL);
     return a;
 }
 
 
-void write_atomic(atomic_t *a, const uint64_t value) {
+void write_atomic(Atomic *a, const uint64_t value) {
     pthread_mutex_lock(&(a->lock));
     a->value = value;
     pthread_mutex_unlock(&(a->lock));
 }
 
 
-void increment_by(atomic_t *c, const uint64_t by) {
+void increment_by(Atomic *c, const uint64_t by) {
     pthread_mutex_lock(&c->lock);
     c->value += by;
     pthread_mutex_unlock(&c->lock);
 }
 
 
-void increment(atomic_t *c) {
+void increment(Atomic *c) {
     increment_by(c, 1);
 }
 
 
-uint64_t incr_read_atomic(atomic_t *c) {
+uint64_t incr_read_atomic(Atomic *c) {
     pthread_mutex_lock(&c->lock);
     c->value += 1;
     uint64_t rc = c->value;
@@ -107,7 +135,7 @@ uint64_t incr_read_atomic(atomic_t *c) {
 }
 
 
-uint64_t read_atomic(atomic_t *c) {
+uint64_t read_atomic(Atomic *c) {
     pthread_mutex_lock(&(c->lock));
     uint64_t rc = c->value;
     pthread_mutex_unlock(&(c->lock));
@@ -115,7 +143,7 @@ uint64_t read_atomic(atomic_t *c) {
 }
 
 
-void free_atomic(atomic_t *c) {
+void free_atomic(Atomic *c) {
     free(c);
 }
 
@@ -140,13 +168,17 @@ const char *random_name(const size_t len) {
 
 void s_log(const uint8_t level, const char *fmt, ...) {
     va_list ap;
-    char msg[MAX_LOG_SIZE];
+    char msg[MAX_LOG_SIZE + 4];
 
     if (level > global.loglevel) return;
 
     va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
+
+    /* Truncate message too long */
+    memcpy(msg+MAX_LOG_SIZE, "...", 3);
+    msg[MAX_LOG_SIZE+3] = '\0';
 
     // Just for standard output for now
     FILE *fp = stdout;

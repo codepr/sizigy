@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-std=gnu11 -Wall -lrt -lpthread -O3 -pedantic
-DEBUGFLAGS=-ggdb -fsanitize=address -fno-omit-frame-pointer
+DEBUGFLAGS=-ggdb -fsanitize=address -fno-omit-frame-pointer -pg
 ADDITIONAL=-fsanitize=undefined
 BIN=./bin
 SRC=src/map.c 		\

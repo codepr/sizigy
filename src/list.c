@@ -1,3 +1,31 @@
+/*
+ * BSD 2-Clause License
+ *
+ * Copyright (c) 2018, Andrea Giacomo Baldan
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,13 +35,13 @@
 /*
  * Create a list, initializing all fields
  */
-list_t *list_create(void) {
-    list_t *l = malloc(sizeof(list_t));
+List *list_create(void) {
+    List *l = malloc(sizeof(List));
     if (!l) {
         perror("malloc(3) failed");
         exit(EXIT_FAILURE);
     }
-    // set default values to the list_t structure fields
+    // set default values to the List structure fields
     l->head = l->tail = NULL;
     l->len = 0L;
     return l;
@@ -23,8 +51,8 @@ list_t *list_create(void) {
 /*
  * Attach a node to the head of a new list
  */
-list_t *list_attach(list_t *l, list_node *head, unsigned long len) {
-    // set default values to the list_t structure fields
+List *list_attach(List *l, list_node *head, unsigned long len) {
+    // set default values to the List structure fields
     l->head = head;
     l->len = len;
     return l;
@@ -33,7 +61,7 @@ list_t *list_attach(list_t *l, list_node *head, unsigned long len) {
 /*
  * Destroy a list, releasing all allocated memory
  */
-void list_release(list_t *l, int deep) {
+void list_release(List *l, int deep) {
     if (!l) return;
     list_node *h = l->head;
     list_node *tmp;
@@ -46,7 +74,7 @@ void list_release(list_t *l, int deep) {
         }
         h = tmp;
     }
-    // free list_t structure pointer
+    // free List structure pointer
     free(l);
 }
 
@@ -55,7 +83,7 @@ void list_release(list_t *l, int deep) {
  * Insert value at the front of the list
  * Complexity: O(1)
  */
-list_t *list_head_insert(list_t *l, void *val) {
+List *list_head_insert(List *l, void *val) {
     list_node *new_node = malloc(sizeof(list_node));
     if (!new_node) {
         perror("malloc(3) failed");
@@ -78,7 +106,7 @@ list_t *list_head_insert(list_t *l, void *val) {
  * Insert value at the back of the list
  * Complexity: O(1)
  */
-list_t *list_tail_insert(list_t *l, void *val) {
+List *Listail_insert(List *l, void *val) {
     list_node *new_node = malloc(sizeof(list_node));
     if (!new_node) {
         perror("malloc(3) failed");

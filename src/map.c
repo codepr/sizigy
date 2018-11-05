@@ -1,3 +1,31 @@
+/*
+ * BSD 2-Clause License
+ *
+ * Copyright (c) 2018, Andrea Giacomo Baldan
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,7 +40,7 @@ const unsigned int MAX_CHAIN_LENGTH = 8;
 /*
  * Hashing function for a string
  */
-static unsigned int hashmap_hash_int(map_t *m, char *keystr) {
+static unsigned int hashmap_hash_int(Map *m, char *keystr) {
 
     unsigned long key = CRC32((unsigned char *) (keystr), strlen(keystr));
 
@@ -37,7 +65,7 @@ static unsigned int hashmap_hash_int(map_t *m, char *keystr) {
  * Return the integer of the location in entries to store the point to the item,
  * or MAP_FULL.
  */
-static int hashmap_hash(map_t *in, void *key) {
+static int hashmap_hash(Map *in, void *key) {
     /* If full, return immediately */
     if (in->size >= (in->table_size / 2)) return MAP_FULL;
     /* Find the best index */
@@ -60,7 +88,7 @@ static int hashmap_hash(map_t *in, void *key) {
 /*
  * Doubles the size of the hashmap, and rehashes all the elements
  */
-static int hashmap_rehash(map_t *m) {
+static int hashmap_rehash(Map *m) {
     unsigned long old_size;
     map_entry *curr;
 
@@ -94,11 +122,11 @@ static int hashmap_rehash(map_t *m) {
 
 
 /*
- * Return an empty hashmap, or NULL on failure. The newly create hashmap_t is
+ * Return an empty hashmap, or NULL on failure. The newly create hashMap is
  * dynamically allocated on the heap memory, so it must be released manually.
  */
-map_t *map_create(void) {
-    map_t *m = malloc(sizeof(map_t));
+Map *map_create(void) {
+    Map *m = malloc(sizeof(Map));
     if(!m) return NULL;
 
     m->entries = (map_entry *) calloc(INITIAL_SIZE, sizeof(map_entry));
@@ -115,9 +143,9 @@ map_t *map_create(void) {
 
 
 /*
- * Add a pointer to the hashmap_t with some key
+ * Add a pointer to the hashMap with some key
  */
-int map_put(map_t *m, void *key, void *val) {
+int map_put(Map *m, void *key, void *val) {
     // Acquire writing lock
     /* pthread_mutex_lock(&(m->wlock)); */
     /* Find a place to put our value */
@@ -142,9 +170,9 @@ int map_put(map_t *m, void *key, void *val) {
 
 
 /*
- * Get your pointer out of the hashmap_t with a key
+ * Get your pointer out of the hashMap with a key
  */
-void *map_get(map_t *m, void *key) {
+void *map_get(Map *m, void *key) {
     /* Find data location */
     int curr = hashmap_hash_int(m, key);
     /* Linear probing, if necessary */
@@ -163,7 +191,7 @@ void *map_get(map_t *m, void *key) {
 /*
  * Return the key-value pair represented by a key in the map
  */
-map_entry *map_get_entry(map_t *m, void *key) {
+map_entry *map_get_entry(Map *m, void *key) {
     /* Find data location */
     int curr = hashmap_hash_int(m, key);
 
@@ -184,7 +212,7 @@ map_entry *map_get_entry(map_t *m, void *key) {
 /*
  * Remove an element with that key from the map
  */
-int map_del(map_t *m, void *key) {
+int map_del(Map *m, void *key) {
     // Acquire writing lock
     /* pthread_mutex_lock(&(m->wlock)); */
     /* Find key */
@@ -215,7 +243,7 @@ int map_del(map_t *m, void *key) {
  * additional any_t argument is passed to the function as its first
  * argument and the pair is the second.
  */
-int map_iterate2(map_t *m, func f, void *arg1) {
+int map_iterate2(Map *m, func f, void *arg1) {
     /* On empty hashmap, return immediately */
     if (m->size <= 0) return MAP_ERR;
     /* Linear probing */
@@ -235,7 +263,7 @@ int map_iterate2(map_t *m, func f, void *arg1) {
  * additional any_t argument is passed to the function as its first
  * argument and the pair is the second.
  */
-int map_iterate3(map_t *m, func3 f, void *arg1, void *arg2) {
+int map_iterate3(Map *m, func3 f, void *arg1, void *arg2) {
     /* On empty hashmap, return immediately */
     if (m->size <= 0) return MAP_ERR;
     /* Linear probing */
@@ -250,7 +278,7 @@ int map_iterate3(map_t *m, func3 f, void *arg1, void *arg2) {
 }
 
 
-/* callback function used with iterate to clean up the hashmap_t */
+/* callback function used with iterate to clean up the hashMap */
 static int destroy(void *t1, void *t2) {
 
     map_entry *kv = (map_entry *) t2;
@@ -267,8 +295,8 @@ static int destroy(void *t1, void *t2) {
     return MAP_OK;
 }
 
-/* Deallocate the hashmap_t */
-void map_release(map_t *m){
+/* Deallocate the hashMap */
+void map_release(Map *m){
     map_iterate2(m, destroy, NULL);
     if (m) {
         if (m->entries)

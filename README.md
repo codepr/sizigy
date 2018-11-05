@@ -24,3 +24,7 @@ is possible to avoid loss of data by the MTU limit in case of huge data payloads
 ## Protocol
 
 TBD.
+
+## Changelog
+
+See the [CHANGELOG](CHANGELOG) file.

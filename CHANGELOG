@@ -1,0 +1,22 @@
+0.5.0 - 2018/11/05
+==================
+
+
+Protocol
+
+- Clean up a bit the code, adapting to MQTT specifications
+- Implemented CONNECT, SUBSCRIBE, UNSUBSCRIBE and PUBLISH
+
+Server
+
+- Redesigned the way of reading bytes from socket in order to not miss any
+  data
+- Start cleaning out codebase and memory leak, some parts are still reused old
+  code
+
+Fix
+
+- Corrected for loop, wrongly defined the counter variable as uint8_t, actually
+  causing it to be bound at 256 values
+- Removing useless error messages, still some corner case to be handled
+- Removed useless and ugly throttling mechanism on publish module

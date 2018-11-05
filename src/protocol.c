@@ -1,3 +1,31 @@
+/*
+ * BSD 2-Clause License
+ *
+ * Copyright (c) 2018, Andrea Giacomo Baldan
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -10,31 +38,30 @@
 #include "protocol.h"
 
 
-static uint8_t *pack_header(uint8_t type,
-        uint8_t opcode, uint32_t data_len, uint32_t total_len) {
+static uint8_t *pack_header(Header *h, uint32_t total_len) {
 
     // bytes to be allocated + size of the data field
     uint8_t *raw = malloc(total_len);
     if (!raw) oom("packing header");
 
-    uint8_t *typ = raw;
+    uint8_t *type = raw;
     uint8_t *tot = raw + sizeof(uint8_t);
-    uint8_t *opcod = tot + sizeof(uint32_t);
+    uint8_t *opcode = tot + sizeof(uint32_t);
 
     // fix index just after size of the data part
-    uint8_t *datal = opcod + sizeof(uint8_t);
+    uint8_t *datalen = opcode + sizeof(uint8_t);
 
     // pack the whole structure
-    *typ = type;
+    *type = h->type;
     *((uint32_t *) tot) = htonl(total_len);
-    *opcod = opcode;
-    *((uint32_t *) datal) = htonl(data_len);
+    *opcode = h->opcode;
+    *((uint32_t *) datalen) = htonl(h->data_len);
 
     return raw;
 }
 
 
-static void pack_handshake_packet(uint8_t *ptr,
+static void pack_connect_packet(uint8_t *ptr,
         uint16_t id_len, uint8_t clean_session, uint8_t *sub_id) {
 
     assert(ptr);
@@ -50,7 +77,7 @@ static void pack_handshake_packet(uint8_t *ptr,
 
 
 static void pack_subscribe_packet(uint8_t *ptr, uint8_t qos,
-        uint64_t offset, uint16_t clen, uint32_t mlen, uint8_t *channel, uint8_t *message) {
+        uint16_t clen, uint32_t mlen, uint8_t *channel, uint8_t *message) {
 
     assert(ptr);
 
@@ -58,22 +85,21 @@ static void pack_subscribe_packet(uint8_t *ptr, uint8_t qos,
     uint8_t *channel_len = ptr;
     uint8_t *message_len = ptr + sizeof(uint16_t);
     uint8_t *q = message_len + sizeof(uint32_t);
-    uint8_t *off = q + sizeof(uint8_t);
-    uint8_t *chan = off + sizeof(uint64_t);
+    uint8_t *chan = q + sizeof(uint8_t);
     uint8_t *mex = chan + clen;
 
     /* Assign values to them */
     *((uint16_t *) channel_len) = htons(clen);
     *((uint32_t *) message_len) = htonl(mlen);
     *q = qos;
-    htonll(off, offset);
 
     memcpy(chan, channel, clen);
     memcpy(mex, message, mlen);
 }
 
 
-static void pack_ack_packet(uint8_t *ptr, uint16_t data_len, uint64_t id, uint8_t *data) {
+static void pack_ack_packet(uint8_t *ptr,
+        uint16_t data_len, uint64_t id, uint8_t *data) {
 
     assert(ptr);
 
@@ -88,11 +114,11 @@ static void pack_ack_packet(uint8_t *ptr, uint16_t data_len, uint64_t id, uint8_
 }
 
 
-packed_t *pack_request(request_t *request) {
+Buffer *pack_request(Request *request) {
 
     assert(request);
 
-    packed_t *packed = malloc(sizeof(packed_t));
+    Buffer *packed = malloc(sizeof(Buffer));
     if (!packed) oom("packing protocol_packet");
 
     /* 2 unsigned char fields and 1 unsigned integer for len + another 1 for total len */
@@ -101,34 +127,33 @@ packed_t *pack_request(request_t *request) {
     uint8_t *hdr = NULL;
     uint32_t tlen = 0;
 
-    switch (request->opcode) {
-        case HANDSHAKE:
+    switch (request->header->opcode) {
+        case CONNECT:
             // move index after data size value, where opcode start
-            tlen = hdrlen + sizeof(uint16_t) + sizeof(uint8_t) + request->data_len;
-            hdr = pack_header(request->type, request->opcode, request->data_len, tlen);
-            pack_handshake_packet(hdr + hdrlen, request->sub_id_len, request->clean_session, request->sub_id);
+            tlen = hdrlen + sizeof(uint16_t) + sizeof(uint8_t) + request->header->data_len;
+            hdr = pack_header(request->header, tlen);
+            pack_connect_packet(hdr + hdrlen, request->sub_id_len, request->clean_session, request->sub_id);
             break;
         case REPLICA:
         case PUBLISH:
         case SUBSCRIBE:
             tlen = hdrlen + sizeof(uint16_t) + sizeof(uint8_t) + \
-                   sizeof(uint32_t) + sizeof(uint64_t) + \
-                   request->channel_len + request->message_len;
-            hdr = pack_header(request->type, request->opcode, request->data_len, tlen);
-            pack_subscribe_packet(hdr + hdrlen, request->qos, request->offset,
+                   sizeof(uint32_t) + request->channel_len + \
+                   request->message_len;
+            hdr = pack_header(request->header, tlen);
+            pack_subscribe_packet(hdr + hdrlen, request->qos,
                     request->channel_len, request->message_len, request->channel, request->message);
             break;
-        case ACK:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
             tlen = hdrlen + sizeof(uint16_t) + sizeof(uint64_t) + request->ack_len;
-            hdr = pack_header(request->type, request->opcode, request->data_len, tlen);
+            hdr = pack_header(request->header, tlen);
             pack_ack_packet(hdr + hdrlen, request->ack_len, request->id, request->ack_data);
             break;
         case UNSUBSCRIBE:
-            tlen = hdrlen + request->data_len;
-            hdr = pack_header(request->type, request->opcode, request->data_len, tlen);
-            memcpy(hdr + hdrlen, request->data, request->data_len);
+            tlen = hdrlen + request->header->data_len;
+            hdr = pack_header(request->header, tlen);
+            memcpy(hdr + hdrlen, request->data, request->header->data_len);
             break;
     }
 
@@ -139,7 +164,7 @@ packed_t *pack_request(request_t *request) {
 }
 
 
-int8_t unpack_request(uint8_t *bytes, request_t *r) {
+int8_t unpack_request(uint8_t *bytes, Request *r) {
 
     assert(bytes);
     assert(r);
@@ -149,18 +174,22 @@ int8_t unpack_request(uint8_t *bytes, request_t *r) {
     uint8_t *tlen = type + sizeof(uint8_t);
     uint8_t *opcode = tlen + sizeof(uint32_t);
     uint8_t *dlen = opcode + sizeof(uint8_t);
+    size_t retain_offset = (2 * sizeof(uint32_t)) + sizeof(uint16_t) + sizeof(uint8_t);
+    size_t channel_offset = retain_offset + sizeof(uint8_t);
 
-    r->type = *type;
-    r->opcode = *opcode;
-    r->data_len = ntohl(*((uint32_t *) dlen));
+    r->header = malloc(sizeof(Header));
 
-    switch (r->opcode) {
-        case HANDSHAKE:
+    r->header->type = *type;
+    r->header->opcode = *opcode;
+    r->header->data_len = ntohl(*((uint32_t *) dlen));
+
+    switch (r->header->opcode) {
+        case CONNECT:
             r->sub_id_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
             r->clean_session = *(dlen + sizeof(uint32_t) + sizeof(uint16_t));
             r->sub_id = malloc(r->sub_id_len + 1);
-            memcpy(r->sub_id, dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint8_t), r->data_len);
-            r->sub_id[r->data_len] = '\0';
+            memcpy(r->sub_id, dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint8_t), r->header->data_len);
+            r->sub_id[r->header->data_len] = '\0';
             break;
         case REPLICA:
         case PUBLISH:
@@ -168,16 +197,14 @@ int8_t unpack_request(uint8_t *bytes, request_t *r) {
             r->channel_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
             r->message_len = ntohl(*((uint32_t *) (dlen + sizeof(uint32_t) + sizeof(uint16_t))));
             r->qos = *(dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t));
-            r->offset = ntohll(dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t));
+            r->retain = *(dlen + retain_offset);
             r->channel = malloc(r->channel_len + 1);
-            memcpy(r->channel, dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint64_t), r->channel_len);
+            memcpy(r->channel, dlen + channel_offset, r->channel_len);
             r->channel[r->channel_len] = '\0';
             r->message = malloc(r->message_len + 1);
-            memcpy(r->message, dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint64_t) + r->channel_len, r->message_len);
+            memcpy(r->message, dlen + channel_offset + r->channel_len, r->message_len);
             r->message[r->message_len] = '\0';
             break;
-        case ACK:
-        case NACK:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
             r->ack_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
@@ -187,9 +214,9 @@ int8_t unpack_request(uint8_t *bytes, request_t *r) {
             r->ack_data[r->ack_len] = '\0';
             break;
         case UNSUBSCRIBE:
-            r->data = malloc(r->data_len + 1);
-            memcpy(r->data, dlen + sizeof(uint32_t), r->data_len);
-            r->data[r->data_len] = '\0';
+            r->data = malloc(r->header->data_len + 1);
+            memcpy(r->data, dlen + sizeof(uint32_t), r->header->data_len);
+            r->data[r->header->data_len] = '\0';
             break;
     }
 
@@ -197,11 +224,11 @@ int8_t unpack_request(uint8_t *bytes, request_t *r) {
 }
 
 
-packed_t *pack_response(response_t *response) {
+Buffer *pack_response(Response *response) {
 
     assert(response);
 
-    packed_t *packed = malloc(sizeof(packed_t));
+    Buffer *packed = malloc(sizeof(Buffer));
     if (!packed) oom("packing protocol_packet");
 
     /* 2 unsigned char fields and 1 unsigned integer for len + another 1 for total len */
@@ -211,13 +238,14 @@ packed_t *pack_response(response_t *response) {
     uint8_t *data = NULL;
     uint16_t clen = response->channel_len;
     uint32_t mlen = response->message_len;
-    uint32_t tlen = headerlen + response->data_len;
+    uint32_t tlen = headerlen + response->header->data_len;
 
-    switch (response->opcode) {
+    switch (response->header->opcode) {
         case REPLICA:
         case PUBLISH:
-            tlen = headerlen + sizeof(uint32_t) + clen + mlen + sizeof(uint16_t) + (2 * sizeof(uint8_t)) + sizeof(uint64_t);
-            hdr = pack_header(response->type, response->opcode, response->data_len, tlen);
+            tlen = headerlen + sizeof(uint32_t) + clen + mlen +
+                sizeof(uint16_t) + (2 * sizeof(uint8_t)) + sizeof(uint64_t);
+            hdr = pack_header(response->header, tlen);
             data = hdr + headerlen;
             uint8_t *channel_len = data;
             uint8_t *message_len = data + sizeof(uint16_t);
@@ -234,12 +262,15 @@ packed_t *pack_response(response_t *response) {
             memcpy(chan, response->channel, clen);
             memcpy(mex, response->message, mlen);
             break;
-        case ACK:
+        case CONNACK:
+        case SUBACK:
+        case PUBACK:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
-            hdr = pack_header(response->type, response->opcode, response->data_len, tlen);
+            tlen += sizeof(uint8_t);
+            hdr = pack_header(response->header, tlen);
             data = hdr + headerlen;
-            memcpy(data, response->data, response->data_len);
+            *data = response->rc;
             break;
     }
 
@@ -250,7 +281,7 @@ packed_t *pack_response(response_t *response) {
 }
 
 
-int8_t unpack_response(uint8_t *bytes, response_t *r) {
+int8_t unpack_response(uint8_t *bytes, Response *r) {
 
     assert(r);
 
@@ -259,32 +290,35 @@ int8_t unpack_response(uint8_t *bytes, response_t *r) {
     uint8_t *tlen = bytes + sizeof(uint8_t);
     uint8_t *opcode = tlen + sizeof(uint32_t);
     uint8_t *dlen = opcode + sizeof(uint8_t);
+    size_t channel_pos = (2 * sizeof(uint32_t)) + sizeof(uint16_t) \
+                         + (2 * sizeof(uint8_t)) + sizeof(uint64_t);
+    size_t id_pos = (2 * sizeof(uint32_t)) + sizeof(uint16_t) + sizeof(uint8_t);
 
-    r->type = *type;
-    r->opcode = *opcode;
-    r->data_len = ntohl(*((uint32_t *) dlen));
+    r->header = malloc(sizeof(Header));
 
-    switch (r->opcode) {
+    r->header->type = *type;
+    r->header->opcode = *opcode;
+    r->header->data_len = ntohl(*((uint32_t *) dlen));
+
+    switch (r->header->opcode) {
         case PUBLISH:
             r->channel_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
-            r->message_len = ntohl(*((uint32_t *) (dlen + sizeof(uint32_t) + sizeof(uint16_t))));
-            r->qos = *(dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t));
-            r->sent_count = *(dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t));
-            r->id = ntohll(dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint8_t));
+            r->message_len = ntohl(*((uint32_t *) (dlen \
+                            + sizeof(uint32_t) + sizeof(uint16_t))));
+            r->qos = *(dlen + (2 * sizeof(uint32_t)) + sizeof(uint16_t));
+            r->sent_count = *(dlen + id_pos);
+            r->id = ntohll(dlen + (2 * sizeof(uint32_t)) \
+                    + sizeof(uint16_t) + (2 * sizeof(uint8_t)));
             r->channel = malloc(r->channel_len + 1);
-            memcpy(r->channel, dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint64_t), r->channel_len + 1);
+            memcpy(r->channel, dlen + channel_pos, r->channel_len + 1);
             r->channel[r->channel_len] = '\0';
             r->message = malloc(r->message_len + 1);
-            memcpy(r->message, dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint64_t) + r->channel_len + 1, r->message_len + 1);
+            memcpy(r->message, dlen + channel_pos + r->channel_len + 1, r->message_len + 1);
             r->message[r->message_len] = '\0';
             break;
-        case ACK:
-        case NACK:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
-            r->data = malloc(r->data_len + 1);
-            memcpy(r->data, dlen + sizeof(uint32_t), r->data_len);
-            r->data[r->data_len] = '\0';
+            r->rc = ntohs(*(dlen + sizeof(uint32_t)));
             break;
     }
 
@@ -292,15 +326,15 @@ int8_t unpack_response(uint8_t *bytes, response_t *r) {
 }
 
 
-request_t *build_ack_request(uint8_t type,
+Request *build_ack_request(uint8_t type,
         uint8_t opcode, uint64_t id, char *data) {
 
-    request_t *r = malloc(sizeof(request_t));
-    if (!r) oom("building handshake request");
+    Request *r = malloc(sizeof(Request));
+    if (!r) oom("building connect request");
 
-    r->type = type;
-    r->opcode = opcode;
-    r->data_len = r->ack_len = strlen(data);
+    r->header->type = type;
+    r->header->opcode = opcode;
+    r->header->data_len = r->ack_len = strlen(data);
     r->id = id;
     r->ack_data = (uint8_t *) data;
 
@@ -308,50 +342,51 @@ request_t *build_ack_request(uint8_t type,
 }
 
 
-request_t *build_handshake_request(uint8_t type,
+Request *build_connect_request(uint8_t type,
         uint8_t opcode, uint8_t clean_session, char *sub_id) {
 
-    request_t *r = malloc(sizeof(request_t));
-    if (!r) oom("building handshake request");
+    Request *r = malloc(sizeof(Request));
+    if (!r) oom("building connect request");
 
-    r->type = type;
-    r->opcode = opcode;
+    r->header->type = type;
+    r->header->opcode = opcode;
     r->clean_session = clean_session;
-    r->data_len = r->sub_id_len = strlen(sub_id);
+    r->header->data_len = r->sub_id_len = strlen(sub_id);
     r->sub_id = (uint8_t *) sub_id;
 
     return r;
 }
 
 
-request_t *build_unsubscribe_request(uint8_t type, uint8_t opcode, char *data) {
+Request *build_unsubscribe_request(uint8_t type, uint8_t opcode, char *data) {
 
-    request_t *r = malloc(sizeof(request_t));
-    if (!r) oom("building handshake request");
+    Request *r = malloc(sizeof(Request));
+    if (!r) oom("building connect request");
 
-    r->type = type;
-    r->opcode = opcode;
-    r->data_len = strlen(data);
+    r->header->type = type;
+    r->header->opcode = opcode;
+    r->header->data_len = strlen(data);
     r->data = (uint8_t *) data;
 
     return r;
 }
 
 
-request_t *build_subscribe_request(uint8_t type, uint8_t opcode,
-        uint8_t qos, char *channel_name, char *message, int64_t offset) {
+Request *build_subscribe_request(uint8_t type, uint8_t opcode,
+        uint8_t qos, char *channel_name, char *message) {
 
-    request_t *r = malloc(sizeof(request_t));
+    Request *r = malloc(sizeof(Request));
     if (!r) oom("building subscribe request");
+
+    r->header = malloc(sizeof(Header));
 
     uint16_t clen = strlen(channel_name);
     uint32_t mlen = strlen(message);
 
-    r->type = type;
-    r->opcode = opcode;
-    r->data_len = clen + mlen;
+    r->header->type = type;
+    r->header->opcode = opcode;
+    r->header->data_len = clen + mlen;
     r->qos = qos;
-    r->offset = offset;
     r->channel_len = clen;
     r->message_len = mlen;
     r->channel = (uint8_t *) channel_name;
@@ -361,7 +396,7 @@ request_t *build_subscribe_request(uint8_t type, uint8_t opcode,
 }
 
 
-response_t *build_publish_response(uint8_t type, uint8_t opcode,
+Response *build_publish_response(uint8_t type, uint8_t opcode,
         uint8_t qos, char *channel_name, char *message, uint8_t incr) {
 
     uint64_t id = read_atomic(global.next_id);
@@ -369,15 +404,17 @@ response_t *build_publish_response(uint8_t type, uint8_t opcode,
         id = incr_read_atomic(global.next_id);
     }
 
-    response_t *r = malloc(sizeof(response_t));
+    Response *r = malloc(sizeof(Response));
     if (!r) oom("building subscribe request");
+
+    r->header = malloc(sizeof(Header));
 
     uint16_t clen = strlen(channel_name);
     uint32_t mlen = strlen(message);
 
-    r->type = type;
-    r->opcode = opcode;
-    r->data_len = clen + mlen;
+    r->header->type = type;
+    r->header->opcode = opcode;
+    r->header->data_len = clen + mlen;
     r->qos = qos;
     r->id = id;
     r->sent_count = 0;
@@ -390,22 +427,73 @@ response_t *build_publish_response(uint8_t type, uint8_t opcode,
 }
 
 
-response_t *build_ack_response(uint8_t type, uint8_t opcode, uint8_t *data) {
+Response *build_ack_response(uint8_t type, uint8_t opcode, uint8_t rc) {
 
-    response_t *r = malloc(sizeof(response_t));
+    Response *r = malloc(sizeof(Response));
     if (!r) oom("building subscribe request");
 
-    r->type = type;
-    r->opcode = opcode;
-    r->data_len = strlen((char *) data);
-    r->data = data;
+    r->header = malloc(sizeof(Header));
+
+    r->header->type = type;
+    r->header->opcode = opcode;
+    r->header->data_len = 0;
+    r->rc = rc;
 
     return r;
 }
 
 
-void free_packed(packed_t *p) {
+void free_packed(Buffer *p) {
     assert(p);
     free(p->data);
     free(p);
 }
+
+
+/* typedef struct Buffer { */
+/*     uint8_t *data; */
+/*     uint32_t next; */
+/*     size_t size; */
+/* } Buffer; */
+/*  */
+/*  */
+/* Buffer *new_buffer() { */
+/*     Buffer *b = malloc(sizeof(Buffer)); */
+/*     b->data = malloc(32); */
+/*     b->size = 32; */
+/*     b->next = 0; */
+/*  */
+/*     return b; */
+/* } */
+/*  */
+/*  */
+/* void reserve_space(Buffer *b, size_t bytes) { */
+/*     if ((b->next + bytes) > b->size) { */
+/*         b->data = realloc(b->data, b->size * 2); */
+/*         b->size *= 2; */
+/*         b->next += bytes; */
+/*     } */
+/* } */
+/*  */
+/*  */
+/* static uint8_t *pack_header(Header *h, uint32_t total_len) { */
+/*  */
+/*     // bytes to be allocated + size of the data field */
+/*     uint8_t *raw = malloc(total_len); */
+/*     if (!raw) oom("packing header"); */
+/*  */
+/*     uint8_t *type = raw; */
+/*     uint8_t *tot = raw + sizeof(uint8_t); */
+/*     uint8_t *opcode = tot + sizeof(uint32_t); */
+/*  */
+/*     // fix index just after size of the data part */
+/*     uint8_t *datalen = opcode + sizeof(uint8_t); */
+/*  */
+/*     // pack the whole structure */
+/*     *type = h->type; */
+/*     *((uint32_t *) tot) = htonl(total_len); */
+/*     *opcode = h->opcode; */
+/*     *((uint32_t *) datalen) = htonl(h->data_len); */
+/*  */
+/*     return raw; */
+/* } */

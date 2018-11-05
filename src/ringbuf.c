@@ -1,3 +1,31 @@
+/*
+ * BSD 2-Clause License
+ *
+ * Copyright (c) 2018, Andrea Giacomo Baldan
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include <assert.h>
 #include <stdlib.h>
 #include "ringbuf.h"
@@ -12,10 +40,10 @@ struct ringbuf {
 };
 
 
-ringbuf_t *ringbuf_init(uint8_t *buffer, size_t size) {
+Ringbuffer *ringbuf_init(uint8_t *buffer, size_t size) {
     assert(buffer && size);
 
-    ringbuf_t *rbuf = malloc(sizeof(ringbuf_t));
+    Ringbuffer *rbuf = malloc(sizeof(Ringbuffer));
     assert(rbuf);
 
     rbuf->buffer = buffer;
@@ -28,7 +56,7 @@ ringbuf_t *ringbuf_init(uint8_t *buffer, size_t size) {
 }
 
 
-void ringbuf_reset(ringbuf_t *rbuf) {
+void ringbuf_reset(Ringbuffer *rbuf) {
     assert(rbuf);
 
     rbuf->head = 0;
@@ -37,31 +65,31 @@ void ringbuf_reset(ringbuf_t *rbuf) {
 }
 
 
-void ringbuf_free(ringbuf_t *rbuf) {
+void ringbuf_free(Ringbuffer *rbuf) {
     assert(rbuf);
     free(rbuf);
 }
 
 
-uint8_t ringbuf_full(ringbuf_t *rbuf) {
+uint8_t ringbuf_full(Ringbuffer *rbuf) {
     assert(rbuf);
     return rbuf->full;
 }
 
 
-uint8_t ringbuf_empty(ringbuf_t *rbuf) {
+uint8_t ringbuf_empty(Ringbuffer *rbuf) {
     assert(rbuf);
     return (!rbuf->full && (rbuf->head == rbuf->tail));
 }
 
 
-size_t ringbuf_capacity(ringbuf_t *rbuf) {
+size_t ringbuf_capacity(Ringbuffer *rbuf) {
     assert(rbuf);
     return rbuf->max;
 }
 
 
-size_t ringbuf_size(ringbuf_t *rbuf) {
+size_t ringbuf_size(Ringbuffer *rbuf) {
 
     assert(rbuf);
 
@@ -79,7 +107,7 @@ size_t ringbuf_size(ringbuf_t *rbuf) {
 }
 
 
-static void advance_pointer(ringbuf_t *rbuf) {
+static void advance_pointer(Ringbuffer *rbuf) {
     assert(rbuf);
 
     if (rbuf->full) {
@@ -91,7 +119,7 @@ static void advance_pointer(ringbuf_t *rbuf) {
 }
 
 
-static void retreat_pointer(ringbuf_t *rbuf) {
+static void retreat_pointer(Ringbuffer *rbuf) {
     assert(rbuf);
 
     rbuf->full = 0;
@@ -99,7 +127,7 @@ static void retreat_pointer(ringbuf_t *rbuf) {
 }
 
 
-int8_t ringbuf_push(ringbuf_t *rbuf, uint8_t data) {
+int8_t ringbuf_push(Ringbuffer *rbuf, uint8_t data) {
     int8_t r = -1;
 
     assert(rbuf && rbuf->buffer);
@@ -114,9 +142,9 @@ int8_t ringbuf_push(ringbuf_t *rbuf, uint8_t data) {
 }
 
 
-int8_t ringbuf_bulk_push(ringbuf_t *rbuf, uint8_t *data, size_t size) {
+int8_t ringbuf_bulk_push(Ringbuffer *rbuf, uint8_t *data, size_t size) {
     int8_t r = 0;
-    for (uint8_t i = 0; i < size; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         r = ringbuf_push(rbuf, data[i]);
         if (r == -1)
             break;
@@ -125,7 +153,7 @@ int8_t ringbuf_bulk_push(ringbuf_t *rbuf, uint8_t *data, size_t size) {
 }
 
 
-int8_t ringbuf_pop(ringbuf_t *rbuf, uint8_t *data) {
+int8_t ringbuf_pop(Ringbuffer *rbuf, uint8_t *data) {
     assert(rbuf && data && rbuf->buffer);
 
     int8_t r = -1;

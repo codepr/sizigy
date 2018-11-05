@@ -1,3 +1,31 @@
+/*
+ * BSD 2-Clause License
+ *
+ * Copyright (c) 2018, Andrea Giacomo Baldan
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -177,7 +205,7 @@ int sendall(const int sfd, uint8_t *buf, ssize_t len, ssize_t *sent) {
 }
 
 
-int recvall(const int sfd, ringbuf_t *ringbuf, ssize_t len) {
+int recvall(const int sfd, Ringbuffer *ringbuf, ssize_t len) {
     int n = 0;
     int total = 0;
     int bufsize = 256;
@@ -186,6 +214,32 @@ int recvall(const int sfd, ringbuf_t *ringbuf, ssize_t len) {
     uint8_t buf[bufsize];
     for (;;) {
         if ((n = recv(sfd, buf, bufsize - 1, 0)) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;
+            } else {
+                perror("recv(2): error reading data\n");
+                return -1;
+            }
+        }
+        if (n == 0) {
+            return 0;
+        }
+        /* Insert all read bytes in the ring buffer */
+        // FIXME check the full ring buffer scenario
+        ringbuf_bulk_push(ringbuf, buf, n);
+
+        total += n;
+    }
+    return total;
+}
+
+
+int recvbytes(const int sfd, Ringbuffer *ringbuf, ssize_t len, size_t bufsize) {
+    int n = 0;
+    int total = 0;
+    uint8_t buf[bufsize];
+    while (total < bufsize) {
+        if ((n = recv(sfd, buf, bufsize - total, 0)) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
             } else {

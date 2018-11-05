@@ -1,3 +1,31 @@
+/*
+ * BSD 2-Clause License
+ *
+ * Copyright (c) 2018, Andrea Giacomo Baldan
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #ifndef SERVER_H
 #define SERVER_H
 
@@ -28,27 +56,34 @@
 #define TIMEOUT         60
 
 
-enum REPLY_TYPE { NO_REPLY, ACK_REPLY, NACK_REPLY, JACK_REPLY, DATA_REPLY, PING_REPLY };
+enum REPLY_TYPE {
+    NO_REPLY,
+    CONNACK_REPLY,
+    SUBACK_REPLY,
+    PUBACK_REPLY,
+    JACK_REPLY,
+    DATA_REPLY
+};
 
 enum STATUS { ONLINE, OFFLINE };
 
 
-typedef struct client client_t;
+typedef struct client Client;
 
-typedef struct reply reply_t;
+typedef struct reply Reply;
 
 struct client {
     uint8_t type;
     uint8_t status;
     const char *addr;
     int fd;
-    int (*ctx_handler)(int, client_t *);
+    int (*ctx_handler)(int, Client *);
     char *id;
-    reply_t *reply;
-    list_t *subscriptions;
+    Reply *reply;
+    List *subscriptions;
     union {
-        request_t *req;
-        response_t *res;
+        Request *req;
+        Response *res;
     };
 };
 
@@ -61,16 +96,24 @@ struct socks {
 
 struct reply {
     uint8_t type;
-    uint8_t qos;
     int fd;
-    char *data;
-    char *channel;
+    union {
+        /* Publish reply */
+        struct {
+            uint8_t qos;
+            uint8_t retain;
+            char *data;
+            char *channel;
+        };
+        /* Common ack reply */
+        uint8_t rc;
+    };
 };
 
 
 struct command {
     int ctype;
-    int (*handler)(client_t *);
+    int (*handler)(Client *);
 };
 
 
@@ -84,21 +127,21 @@ struct global {
     /* Bus epoll fd */
     int bepollfd;
     /* Atomic auto-increment unsigned long long int to get the next message ID */
-    atomic_t *next_id;
+    Atomic *next_id;
     /* Channels mapping */
-    map_t *channels;
+    Map *channels;
     /* ACK awaiting mapping fds (Unused) */
-    map_t *ack_waiting;
+    Map *ack_waiting;
     /* Tracking clients */
-    map_t *clients;
+    Map *clients;
     /* Peers connected */
-    list_t *peers;
+    List *peers;
     /* Global lock to avoid race conditions on critical shared parts */
     pthread_mutex_t lock;
     /* Approximation of the load */
-    atomic_t *throughput;
+    Atomic *throughput;
     /* Throttler utility */
-    throttler_t *throttler;
+    Throttler *throttler;
     /* Epoll workers count */
     int workers;
 };
@@ -107,7 +150,7 @@ struct global {
 extern struct global global;
 
 
-int parse_header(ringbuf_t *, char *, uint8_t *);
+int parse_header(Ringbuffer *, char *, uint8_t *);
 int start_server(const char *, char *, int);
 
 #endif
