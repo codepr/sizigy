@@ -57,6 +57,7 @@ Channel *create_channel(char *name) {
     channel->name = strdup(name);
     channel->subscribers = list_create();
     channel->messages = create_queue();
+    channel->retained = NULL;
 
     return channel;
 }
@@ -70,6 +71,24 @@ void add_subscriber(Channel *chan, struct subscriber *subscriber) {
 void del_subscriber(Channel *chan, struct subscriber *subscriber) {
     list_node node = { subscriber, NULL };
     chan->subscribers->head = list_remove_node(chan->subscribers->head, &node, sub_compare);
+}
+
+
+void retain_message(Channel *channel, const uint64_t id,
+        uint8_t qos, uint8_t dup, const char *payload) {
+
+    Message *m = malloc(sizeof(Message));
+    if (!m) oom("creating message to be stored");
+
+    m->creation_time = time(NULL);
+    m->id = id;
+    m->qos = qos;
+    m->dup = dup;
+    m->payload = strdup(payload);
+    m->channel = channel->name;
+    m->retained = 1;
+    channel->retained = m;
+
 }
 
 
@@ -124,6 +143,7 @@ int publish_message(Channel *chan, uint8_t qos, uint8_t retain, void *message, i
         response->qos = AT_LEAST_ONCE;
         qos_mod = 1;
     }
+
     Buffer *p_ack = pack_response(response);
 
     /* Restore original qos */
@@ -134,7 +154,9 @@ int publish_message(Channel *chan, uint8_t qos, uint8_t retain, void *message, i
             p->size, chan->name, id, qos, retain, duplicate, (char *) message);
 
     /* Add message to the Queue associated to the channel */
-    store_message(chan, response->id, response->qos, response->sent_count, message, 1);
+    /* store_message(chan, response->id, response->qos, response->sent_count, message, 1); */
+    if (retain == 1)
+        retain_message(chan, response->id, response->qos, response->sent_count, message);
 
     /* Sent bytes sentinel */
     ssize_t sent = 0;

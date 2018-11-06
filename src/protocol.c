@@ -188,7 +188,8 @@ int8_t unpack_request(uint8_t *bytes, Request *r) {
             r->sub_id_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
             r->clean_session = *(dlen + sizeof(uint32_t) + sizeof(uint16_t));
             r->sub_id = malloc(r->sub_id_len + 1);
-            memcpy(r->sub_id, dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint8_t), r->header->data_len);
+            memcpy(r->sub_id, dlen + sizeof(uint32_t) +
+                    sizeof(uint16_t) + sizeof(uint8_t), r->header->data_len);
             r->sub_id[r->header->data_len] = '\0';
             break;
         case REPLICA:
@@ -196,7 +197,7 @@ int8_t unpack_request(uint8_t *bytes, Request *r) {
         case SUBSCRIBE:
             r->channel_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
             r->message_len = ntohl(*((uint32_t *) (dlen + sizeof(uint32_t) + sizeof(uint16_t))));
-            r->qos = *(dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t));
+            r->qos = *(dlen + (2 * sizeof(uint32_t)) + sizeof(uint16_t));
             r->retain = *(dlen + retain_offset);
             r->channel = malloc(r->channel_len + 1);
             memcpy(r->channel, dlen + channel_offset, r->channel_len);
@@ -210,7 +211,8 @@ int8_t unpack_request(uint8_t *bytes, Request *r) {
             r->ack_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
             r->id = ntohll(dlen + sizeof(uint32_t) + sizeof(uint16_t));
             r->ack_data = malloc(r->ack_len + 1);
-            memcpy(r->ack_data, dlen + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint64_t), r->ack_len);
+            memcpy(r->ack_data, dlen + sizeof(uint32_t) +
+                    sizeof(uint16_t) + sizeof(uint64_t), r->ack_len);
             r->ack_data[r->ack_len] = '\0';
             break;
         case UNSUBSCRIBE:
@@ -448,52 +450,3 @@ void free_packed(Buffer *p) {
     free(p->data);
     free(p);
 }
-
-
-/* typedef struct Buffer { */
-/*     uint8_t *data; */
-/*     uint32_t next; */
-/*     size_t size; */
-/* } Buffer; */
-/*  */
-/*  */
-/* Buffer *new_buffer() { */
-/*     Buffer *b = malloc(sizeof(Buffer)); */
-/*     b->data = malloc(32); */
-/*     b->size = 32; */
-/*     b->next = 0; */
-/*  */
-/*     return b; */
-/* } */
-/*  */
-/*  */
-/* void reserve_space(Buffer *b, size_t bytes) { */
-/*     if ((b->next + bytes) > b->size) { */
-/*         b->data = realloc(b->data, b->size * 2); */
-/*         b->size *= 2; */
-/*         b->next += bytes; */
-/*     } */
-/* } */
-/*  */
-/*  */
-/* static uint8_t *pack_header(Header *h, uint32_t total_len) { */
-/*  */
-/*     // bytes to be allocated + size of the data field */
-/*     uint8_t *raw = malloc(total_len); */
-/*     if (!raw) oom("packing header"); */
-/*  */
-/*     uint8_t *type = raw; */
-/*     uint8_t *tot = raw + sizeof(uint8_t); */
-/*     uint8_t *opcode = tot + sizeof(uint32_t); */
-/*  */
-/*     // fix index just after size of the data part */
-/*     uint8_t *datalen = opcode + sizeof(uint8_t); */
-/*  */
-/*     // pack the whole structure */
-/*     *type = h->type; */
-/*     *((uint32_t *) tot) = htonl(total_len); */
-/*     *opcode = h->opcode; */
-/*     *((uint32_t *) datalen) = htonl(h->data_len); */
-/*  */
-/*     return raw; */
-/* } */

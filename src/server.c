@@ -119,8 +119,8 @@ static uint8_t *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type)
 }
 
 
-/* Used to clean up disconnected clients for whatever reason from the subscriptions or global
-   connected peer */
+/* Used to clean up disconnected clients for whatever reason from the
+   subscriptions or global connected peer */
 static int close_socket(void *arg1, void *arg2) {
     int fd = *(int *) arg1;
     map_entry *kv = (map_entry *) arg2;
@@ -130,8 +130,8 @@ static int close_socket(void *arg1, void *arg2) {
     return 0;
 }
 
-/* Send a define nr of messages already published in the channel of choice, based on an offset
-   defined in the subscription request */
+/* Send a define nr of messages already published in the channel of choice,
+   based on an offset defined in the subscription request */
 static int send_data(void *arg1, void *ptr) {
     int ret = 0;
     struct subscriber *sub = (struct subscriber *) ptr;
@@ -252,7 +252,6 @@ static int connect_handler(Client *c) {
 
     if (c->type == REQUEST) {
         if (!c->req->sub_id || c->req->sub_id_len == 0) {
-            /* return err_handler(c, ERR_MISS_ID); */
             reply_connack(c, c->fd, 0x01);
             DEBUG("Sending CONNACK to %s rc=1", c->req->sub_id);
         } else {
@@ -293,14 +292,10 @@ static int replica_handler(Client *c) {
         /* Add message to the channel */
         // XXX require new command packet for replica (e.g. save ID etc)
         store_message(chan, 0, c->req->qos, 0, (char *) c->req->message, 0);
-        /* reply_ok(c, c->fd, c->req->qos); */
 
         DEBUG("REPLICA channel=%s id=%d qos=%d message=%s",
                 c->req->channel, c->req->id, c->req->qos, c->req->message);
-    } /*else {
-        DEBUG("REPLICA response");
-        reply_ok(c, c->fd, 0);
-    }*/
+    }
     return 1;
 }
 
@@ -309,17 +304,13 @@ static int publish_message_handler(Client *c) {
 
     if (c->type == REQUEST) {
         if (!c->req->channel || c->req->channel_len == 0) {
-            /* return err_handler(c, ERR_MISS_CHAN); */
             DEBUG("Error: missing channel");
         } else {
 
             add_reply(c, DATA_REPLY, c->req->qos, c->req->retain, c->fd, 0x00,
                     strdup((char *) c->req->channel), strdup((char *) c->req->message));
         }
-    } /*else {
-        reply_ok(c, c->fd, 0);
-    }*/
-
+    }
     return 1;
 }
 
@@ -328,9 +319,10 @@ static int subscribe_channel_handler(Client *c) {
 
     if (c->type == REQUEST) {
         if (!c->req->channel || c->req->channel_len == 0) {
-            /* return err_handler(c, ERR_MISS_CHAN); */
+
             reply_suback(c, c->fd, 0x01);
             DEBUG("Sending SUBACK id=%s rc=1", c->id);
+
         } else {
 
             DEBUG("Received SUBSCRIBE id=%s channel=%s qos=%d", c->id, c->req->channel, c->req->qos);
@@ -356,7 +348,12 @@ static int subscribe_channel_handler(Client *c) {
 
             /* Send requested nr. of already published messages, 0 as offset means
                all previous messages */
-            send_queue(chan->messages, sub, send_data);
+            /* send_queue(chan->messages, sub, send_data); */
+
+            /* Send retained messages, if any */
+            if (chan->retained) {
+                c->reply->retained = chan->retained;
+            }
 
             list_head_insert(c->subscriptions, chan->name);
         }
@@ -541,15 +538,18 @@ static int request_handler(const int epollfd, Client *client) {
 }
 
 
-static Buffer *craft_response(uint8_t type, Response *ack, uint8_t rc) {
-    switch (type) {
+static Buffer *craft_response(Reply *r, Response *ack, uint8_t rc) {
+    switch (r->type) {
         case CONNACK_REPLY:
            ack->header->opcode = CONNACK;
            ack->rc = rc;
            break;
         case SUBACK_REPLY:
            ack->header->opcode = SUBACK;
-           ack->rc = rc;
+           // In case of retained message we assume rc == 0
+           if (!r->retained)
+               ack->rc = rc;
+           else ack->rc = 0x00;
            break;
         case PUBACK_REPLY:
            ack->header->opcode = PUBACK;
@@ -571,12 +571,11 @@ static int reply_handler(const int epollfd, Client *client) {
 
     /* Alloc on the heap a ACK response, will be manipulated according to the
        case of use */
-    /* Response *ack = build_ack_res(ACK, 0x00); */
     Buffer *p_ack = NULL;
 
     if (reply->type >= CONNACK_REPLY && reply->type <= PUBACK_REPLY) {
         Response *ack = build_ack_res(CONNACK, 0x00);
-        p_ack = craft_response(reply->type, ack, 0x00);
+        p_ack = craft_response(reply, ack, 0x00);
         if ((sendall(reply->fd, p_ack->data, p_ack->size, &sent)) < 0) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
@@ -584,6 +583,25 @@ static int reply_handler(const int epollfd, Client *client) {
         free(ack->header);
         free(ack);
         free_packed(p_ack);
+
+        /* In case of reply->retained we assume that the rc == 0 */
+        if (reply->type == SUBACK_REPLY && reply->retained) {
+            Message *m = reply->retained;
+            char *channel = append_string(m->channel, " ");
+            Response *r = build_pub_res(m->qos, channel, m->payload, 0);
+
+            r->id = m->id;
+
+            Buffer *p = pack_response(r);
+            if (sendall(reply->fd, p->data, p->size, &(ssize_t) { 0 }) < 0) {
+                perror("send(2): error sending\n");
+            }
+
+            free(channel);
+            free_packed(p);
+            free(r);
+        }
+
     } else if (reply->type == JACK_REPLY) {
 
         /* Dirty hack: we should now send host:port pairs in order to update
@@ -630,6 +648,7 @@ static int reply_handler(const int epollfd, Client *client) {
         }
         free(join_ack);
         free_packed(p_ack);
+
     } else {
 
         void *raw_subs = map_get(global.channels, reply->channel);
@@ -972,7 +991,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     for (int i = 0; i < EPOLL_WORKERS; ++i)
         pthread_create(&workers[i], NULL, worker, (void *) &fds);
 
-    INFO("Sizigy v0.5.0");
+    INFO("Sizigy v0.5.1");
     INFO("Starting server on %s:%s", addr, port);
 
     Client node = {

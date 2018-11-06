@@ -41,20 +41,22 @@
 
 
 typedef struct {
-    char *name;
-    List *subscribers;
-    Queue *messages;
-} Channel;
-
-
-typedef struct {
     uint64_t id;
     uint8_t qos;
     uint8_t dup;
+    uint8_t retained;
     time_t creation_time;
     char *channel;
     char *payload;
 } Message;
+
+
+typedef struct {
+    char *name;
+    List *subscribers;
+    Queue *messages;
+    Message *retained;
+} Channel;
 
 
 struct subscriber {
@@ -69,6 +71,7 @@ void add_subscriber(Channel *, struct subscriber *);
 void del_subscriber(Channel *, struct subscriber *);
 int publish_message(Channel *, uint8_t, uint8_t, void *, int);
 void store_message(Channel *, const uint64_t, uint8_t, uint8_t, const char *, int);
+void retain_message(Channel *, const uint64_t, uint8_t, uint8_t, const char *);
 void destroy_channel(Channel *);
 
 #endif

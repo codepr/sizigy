@@ -1,3 +1,13 @@
+0.5.1 - 2018/11/06
+==================
+
+
+Feature
+
+- Add rudimentary retain mechanism, new subscriber receive most recent retained
+  message on each topic they subscribe to
+
+
 0.5.0 - 2018/11/05
 ==================
 

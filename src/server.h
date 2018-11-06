@@ -36,6 +36,7 @@
 #include "util.h"
 #include "list.h"
 #include "ringbuf.h"
+#include "channel.h"
 #include "protocol.h"
 
 
@@ -105,6 +106,8 @@ struct reply {
             char *data;
             char *channel;
         };
+        /* Suback reply */
+        Message *retained;
         /* Common ack reply */
         uint8_t rc;
     };
