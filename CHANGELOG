@@ -1,3 +1,11 @@
+0.5.2 - 2018/11/09
+==================
+
+Fix
+
+- Fixed responses and requests on sizigysub and sizigypub modules
+
+
 0.5.1 - 2018/11/06
 ==================
 

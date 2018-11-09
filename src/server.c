@@ -132,33 +132,6 @@ static int close_socket(void *arg1, void *arg2) {
     return 0;
 }
 
-/* Send a define nr of messages already published in the channel of choice,
-   based on an offset defined in the subscription request */
-static int send_data(void *arg1, void *ptr) {
-    int ret = 0;
-    struct subscriber *sub = (struct subscriber *) ptr;
-
-    queue_item *item = (queue_item *) arg1;
-    Message *m = (Message *) item->data;
-    char *channel = append_string(m->channel, " ");
-    Response *r = build_pub_res(m->qos, channel, m->payload, 0);
-
-    /* Set QOS according to subscriber QOS */
-    if (sub->qos > 0)
-        r->qos = 1;
-    r->id = m->id;
-
-    Buffer *p = pack_response(r);
-    if (sendall(sub->fd, p->data, p->size, &(ssize_t) { 0 }) < 0) {
-        perror("send(2): error sending\n");
-        ret = -1;
-    }
-
-    free(channel);
-    free_packed(p);
-    free(r);
-    return ret;
-}
 
 /* Build a reply object and link it to the Client pointer */
 static void add_reply(Client *c, uint8_t type, uint8_t qos,
@@ -346,10 +319,6 @@ static int subscribe_channel_handler(Client *c) {
             sub->name = c->id;
             sub->qos = c->req->qos;
             add_subscriber(chan, sub);
-
-            /* Send requested nr. of already published messages, 0 as offset means
-               all previous messages */
-            /* send_queue(chan->messages, sub, send_data); */
 
             /* Send retained messages, if any */
             if (chan->retained) {

@@ -150,7 +150,7 @@ int publish_message(Channel *chan, uint8_t qos, uint8_t retain, void *message, i
     if (qos_mod)
         response->qos = AT_MOST_ONCE;
 
-    DEBUG("Received PUBLISH (%ld b) ch=%s id=%ld qos=%d rt=%d dup=%d p=%s",
+    DEBUG("Received PUBLISH size=%ld ch=%s id=%ld qos=%d rt=%d dup=%d p=%s",
             p->size, chan->name, id, qos, retain, duplicate, (char *) message);
 
     /* Add message to the Queue associated to the channel */

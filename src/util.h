@@ -33,7 +33,7 @@
 #include <stdint.h>
 
 
-#define MAX_LOG_SIZE 79
+#define MAX_LOG_SIZE 99
 
 
 enum { INFO, ERROR, DEBUG };
