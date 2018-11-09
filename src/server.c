@@ -73,14 +73,16 @@ static int request_handler(const int, Client *);
 static const int HEADLEN = sizeof(uint8_t) + sizeof(uint32_t);
 
 
-static uint8_t *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
+uint8_t *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
 
     size_t n = 0;
     uint8_t read_all = 0;
 
-    /* Read first 5 bytes to get the total len of the packet */
-    if ((n = recvbytes(clientfd, rbuf, read_all, HEADLEN)) < 0)
-        exit(EXIT_FAILURE);
+    while (n < HEADLEN) {
+        /* Read first 5 bytes to get the total len of the packet */
+        if ((n += recvbytes(clientfd, rbuf, read_all, HEADLEN)) < 0)
+            exit(EXIT_FAILURE);
+    }
 
     uint8_t tmp[ringbuf_size(rbuf)];
     uint8_t *bytearray = tmp;
@@ -306,7 +308,6 @@ static int publish_message_handler(Client *c) {
         if (!c->req->channel || c->req->channel_len == 0) {
             DEBUG("Error: missing channel");
         } else {
-
             add_reply(c, DATA_REPLY, c->req->qos, c->req->retain, c->fd, 0x00,
                     strdup((char *) c->req->channel), strdup((char *) c->req->message));
         }
@@ -353,6 +354,8 @@ static int subscribe_channel_handler(Client *c) {
             /* Send retained messages, if any */
             if (chan->retained) {
                 c->reply->retained = chan->retained;
+            } else {
+                c->reply->retained = NULL;
             }
 
             list_head_insert(c->subscriptions, chan->name);
@@ -587,6 +590,7 @@ static int reply_handler(const int epollfd, Client *client) {
         /* In case of reply->retained we assume that the rc == 0 */
         if (reply->type == SUBACK_REPLY && reply->retained) {
             Message *m = reply->retained;
+            printf("CHAN %s\n", m->channel);
             char *channel = append_string(m->channel, " ");
             Response *r = build_pub_res(m->qos, channel, m->payload, 0);
 

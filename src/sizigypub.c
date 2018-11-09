@@ -35,13 +35,45 @@
 
 
 char *readline(char *prompt) {
-    char buffer[BUFSIZE];
+    /* char buffer[BUFSIZE]; */
     fputs(prompt, stdout);
-    fgets(buffer, BUFSIZE, stdin);
-    char *cpy = malloc(strlen(buffer) + 1);
-    strncpy(cpy, buffer, strlen(cpy) - 1);
-    cpy[strlen(cpy)] = '\0';
-    return cpy;
+    char *line = malloc(BUFSIZE), *linep = line;
+    size_t lenmax = BUFSIZE, len = lenmax;
+    int c;
+
+    if (line == NULL)
+        return NULL;
+
+    for (;;) {
+        c = fgetc(stdin);
+        if (c == EOF)
+            break;
+
+        if (--len == 0) {
+            len = lenmax;
+            char *linen = realloc(linep, lenmax *= 2);
+
+            if (linen == NULL) {
+                free(linep);
+                return NULL;
+            }
+
+            line = linen + (line - linep);
+            linep = linen;
+        }
+
+        if ((*line++ = c) == '\n')
+            break;
+    }
+    *line = '\0';
+    linep[strlen(linep)-1] = '\0';
+    return linep;
+    /* fgets(buffer, BUFSIZE, stdin); */
+    /* size_t buflen = strlen(buffer) + 1; */
+    /* char *cpy = malloc(buflen); */
+    /* strncpy(cpy, buffer, buflen - 2); */
+    /* cpy[strlen(cpy)] = '\0'; */
+    /* return cpy; */
 }
 
 
@@ -50,27 +82,31 @@ int main(int argc, char **argv) {
     int connfd = make_connection("127.0.0.1", 9090);
     ssize_t n = 0;
     char buffer[BUFSIZE];
-    protocol_packet_t *quit = build_response_ack(QUIT, "");
-    Buffer *quitp = pack(quit);
+    Request *quit = build_ack_req(QUIT, "");
+    Buffer *quitp = pack_request(quit);
 
     while (1) {
         char *input = readline("> ");
 
         if (strncasecmp(input, "QUIT", 4) == 0) {
-            if ((n = sendall(connfd, quitp->data, quitp->size, &(ssize_t) { 0 })) < 0)
+            if ((n = sendall(connfd, quitp->data,
+                            quitp->size, &(ssize_t) { 0 })) < 0)
                 printf("Error packing\n");
             free(input);
             break;
         }
 
-        protocol_packet_t *pub = build_request_publish(0, 0, "test01 ", input);
-        Buffer *p_pub = pack(pub);
+        Request *pub = build_subscribe_request(0xfc, 0x03, 0x00, "test01", input);
+        Buffer *p_pub = pack_request(pub);
 
-        if ((n = sendall(connfd, p_pub->data, p_pub->size, &(ssize_t) { 0 })) < 0)
+        if ((n = sendall(connfd, p_pub->data,
+                        p_pub->size, &(ssize_t) { 0 })) < 0)
             printf("Error packing\n");
 
-        if ((n = recv(connfd, buffer, BUFSIZE, 0)) < 0)
-            printf("Error receiving\n");
+        if (pub->qos > 0) {
+            if ((n = recv(connfd, buffer, BUFSIZE, 0)) < 0)
+                printf("Error receiving\n");
+        }
 
         free(p_pub);
         free(input);

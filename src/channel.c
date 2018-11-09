@@ -177,7 +177,7 @@ int publish_message(Channel *chan, uint8_t qos, uint8_t retain, void *message, i
                 perror("Can't publish");
             total_bytes_sent += sent;
         }
-        DEBUG("Sending PUBLISH to %s", sub->name);
+        DEBUG("Sending PUBLISH to %s p=%s", sub->name, message);
         cursor = cursor->next;
     }
     free_packed(p);

@@ -275,6 +275,7 @@ void add_epoll(const int efd, const int fd, void *data) {
 
 void mod_epoll(const int efd, const int fd, const int evs, void *data) {
     struct epoll_event ev;
+    ev.data.fd = fd;
     if (data)
         ev.data.ptr = data;
     ev.events = evs | EPOLLET | EPOLLONESHOT;

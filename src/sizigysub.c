@@ -38,8 +38,8 @@
 #include "protocol.h"
 
 
-int handle_request(int epollfd, int fd) {
-    int ret = 0;
+static int handle_request(const int epollfd, const int fd) {
+
     /* Buffer to initialize the ring buffer, used to handle input from client */
     uint8_t buffer[ONEMB * 2];
 
@@ -48,54 +48,38 @@ int handle_request(int epollfd, int fd) {
        overlapping as well */
     Ringbuffer *rbuf = ringbuf_init(buffer, ONEMB * 2);
 
-    /* Read all data to form a packet flag */
-    int8_t read_all = -1;
-    ssize_t n;
-    protocol_packet_t *p = malloc(sizeof(protocol_packet_t));
+    /* Placeholders structures, at this point we still don't know if we got a
+       request or a response */
+    Response res;
+    uint8_t type = 0;
 
-    time_t start = time(NULL);
-    while (read_all != 0) {
-        if ((n = recvall(fd, rbuf, read_all)) < 0) {
-            ret = -1;
-            goto cleanup;
-        }
-        if (n == 0) {
-            ret = 0;
-            goto cleanup;
-        }
+    /* We must read all incoming bytes till an entire packet is received. This
+       is achieved by using a standardized protocol, which send the size of the
+       complete packet as the first 5 bytes. By knowing it we know if the packet is
+       ready to be deserialized and used.*/
+    uint8_t *bytes = recv_packet(fd, rbuf, &type);
 
-        /* Unpack incoming bytes */
-        char bytes[ringbuf_size(rbuf)];
-        /* Check the header, returning -1 in case of insufficient informations
-           about the total packet length and the subsequent payload bytes */
-        read_all = parse_header(rbuf, bytes);
+    uint8_t read_all = unpack_response((uint8_t *) bytes, &res);
 
-        if (read_all == 0)
-            read_all = unpack((uint8_t *) bytes, p);
+    free(bytes);
 
-        if (time(NULL) - start > 60)
-            read_all = 1;
-    }
+    /* Free ring buffer as we alredy have all needed informations in memory */
+    ringbuf_free(rbuf);
 
     if (read_all == 1) {
-        ret = -1;
-        goto cleanup;
+        return -1;
     }
 
-    if (p->opcode == 0x05)
-        printf("%s\n", p->pub_packet->data);
-
-    ringbuf_free(rbuf);
+    if (res.header->opcode == PUBLISH)
+        printf("%s\n", res.message);
 
     mod_epoll(epollfd, fd, EPOLLIN, NULL);
 
-cleanup:
-    free(p);
-    return ret;
+    return 0;
 }
 
 
-void *Responsehread(void *ptr) {
+void *response_thread(void *ptr) {
     struct socks *pair = (struct socks *) ptr;
     struct epoll_event *events = malloc(sizeof(*events) * MAX_EVENTS);
     int events_cnt;
@@ -137,9 +121,9 @@ int main(int argc, char **argv) {
     add_epoll(epollfd, connfd, NULL);
     ssize_t n;
     /* Create a protocol formatted packet to subscribe to a channel */
-    protocol_packet_t *sub_packet = build_request_subscribe("test01", 0);
+    Request *sub_r = build_subscribe_request(REQUEST, SUBSCRIBE, AT_MOST_ONCE, "test01", "");
     /* Pack it in order to be sent in binary format */
-    Buffer *sp = pack(sub_packet);
+    Buffer *sp = pack_request(sub_r);
     /* Subscribe to the channel */
     if ((n = sendall(connfd, sp->data, sp->size, &(ssize_t) { 0 })) < 0)
         return -1;
@@ -147,6 +131,6 @@ int main(int argc, char **argv) {
     free(sp);
 
     struct socks pair = { epollfd, connfd };
-    Responsehread(&pair);
+    response_thread(&pair);
     return 0;
 }

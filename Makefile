@@ -13,21 +13,15 @@ SRC=src/map.c 		\
 	src/network.c	\
 	src/protocol.c
 
-SUBSRC=src/protocol.c src/network.c src/ringbuf.c
-
-PUBSRC=src/protocol.c src/network.c
-
 sizigy: $(SRC)
-	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(SRC) src/main.c -o $(BIN)/sizigy
-
-sizigysub: $(SUBSRC)
-	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(SRC) src/sizigysub.c -o $(BIN)/sizigysub
-
-sizigypub: $(SUBSRC)
-	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(SRC) src/sizigypub.c -o $(BIN)/sizigypub
+	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(SRC) src/main.c -o $(BIN)/sizigy \
+		&& $(CC) $(CFLAGS) $(SRC) src/sizigysub.c -o $(BIN)/sizigysub \
+		&& $(CC) $(CFLAGS) $(SRC) src/sizigypub.c -o $(BIN)/sizigypub
 
 debug:
-	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(DEBUGFLAGS) $(SRC) src/main.c -o $(BIN)/sizigy
+	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(DEBUGFLAGS) $(SRC) src/main.c -o $(BIN)/sizigy \
+		&& $(CC) $(CFLAGS) $(DEBUGFLAGS) $(SRC) src/sizigypub.c -o $(BIN)/sizigypub \
+		&& $(CC) $(CFLAGS) $(DEBUGFLAGS) $(SRC) src/sizigysub.c -o $(BIN)/sizigysub
 
 clean:
-	rm -f $(BIN)/sizigy
+	rm -f $(BIN)/*
