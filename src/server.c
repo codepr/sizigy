@@ -50,12 +50,10 @@
 
 
 #define reply_connack(c, fd, status) \
-    (add_reply((c), CONNACK_REPLY, 0x00, \
-               0x00, (fd), (status), NULL, NULL));
+    (add_ack_reply((c), CONNACK_REPLY, (fd), (status)));
 
 #define reply_suback(c, fd, status) \
-    (add_reply((c), SUBACK_REPLY, 0x00, \
-               0x00, (fd), (status), NULL, NULL));
+    (add_ack_reply((c), SUBACK_REPLY, (fd), (status)));
 
 
 // Reference to the global structure, could be refactored lately to a more
@@ -65,14 +63,33 @@ struct global global;
 
 static int reply_handler(const int, Client *);
 static int request_handler(const int, Client *);
-
+static int accept_handler(const int , Client *);
+static int close_socket(void *, void *);
+static void add_reply(Client *, uint8_t,
+        uint8_t, uint8_t, const int, char *, char *);
+static void add_ack_reply(Client *, uint8_t, const int, uint8_t);
+static int quit_handler(Client *);
+static int join_handler(Client *);
+static int join_ack_handler(Client *);
+static int connect_handler(Client *);
+static int replica_handler(Client *);
+static int publish_handler(Client *);
+static int subscribe_handler(Client *);
+static int unsubscribe_handler(Client *);
+static void free_reply(Reply *);
+static int destroy_clients(void *, void *);
+static int destroy_channels(void *, void *);
+static int destroy_queue_data(void *, void *);
+static void *worker(void *);
+static Buffer *craft_response(Reply *, Response *, uint8_t );
 
 // Fixed size of the header of each packet, consists of essentially the first
 // 5 bytes containing respectively the type of packet (REQUEST OR RESPONSE)
 // and the total length in bytes of the packet
 static const int HEADLEN = sizeof(uint8_t) + sizeof(uint32_t);
 
-
+/* Parse header, require at least the first 5 bytes in order to read packet
+   type and total length that we need to recv to complete the packet */
 uint8_t *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
 
     size_t n = 0;
@@ -135,7 +152,7 @@ static int close_socket(void *arg1, void *arg2) {
 
 /* Build a reply object and link it to the Client pointer */
 static void add_reply(Client *c, uint8_t type, uint8_t qos,
-        uint8_t retain, const int fd, uint8_t rc, char *channel, char *message) {
+        uint8_t retain, const int fd, char *channel, char *message) {
 
     Reply *r = malloc(sizeof(Reply));
     if (!r) oom("adding reply");
@@ -143,10 +160,20 @@ static void add_reply(Client *c, uint8_t type, uint8_t qos,
     r->type = type;
     r->qos = qos;
     r->fd = fd;
-    r->rc = rc;
     r->retain = retain;
     r->data = message;
     r->channel = channel;
+    c->reply = r;
+}
+
+
+static void add_ack_reply(Client *c, uint8_t type, const int fd, uint8_t rc) {
+    Reply *r = malloc(sizeof(Reply));
+    if (!r) oom("adding ack reply");
+
+    r->type = type;
+    r->fd = fd;
+    r->rc = rc;
     c->reply = r;
 }
 
@@ -167,7 +194,7 @@ static int join_handler(Client *c) {
     if (c->type == REQUEST) {
 
         /* XXX Dirty hack: Request of client contains the client bus listening port */
-        add_reply(c, JACK_REPLY, 0, 0, c->fd, 0x00, (char *) c->req->ack_data, c->id);
+        add_reply(c, JACK_REPLY, 0, 0, c->fd, (char *) c->req->ack_data, c->id);
 
         // XXX for now just insert pointer to client struct
         global.peers = list_head_insert(global.peers, c);
@@ -275,13 +302,13 @@ static int replica_handler(Client *c) {
 }
 
 
-static int publish_message_handler(Client *c) {
+static int publish_handler(Client *c) {
 
     if (c->type == REQUEST) {
         if (!c->req->channel || c->req->channel_len == 0) {
-            DEBUG("Error: missing channel");
+            ERROR("Error: missing channel");
         } else {
-            add_reply(c, DATA_REPLY, c->req->qos, c->req->retain, c->fd, 0x00,
+            add_reply(c, DATA_REPLY, c->req->qos, c->req->retain, c->fd,
                     strdup((char *) c->req->channel), strdup((char *) c->req->message));
         }
     }
@@ -289,7 +316,7 @@ static int publish_message_handler(Client *c) {
 }
 
 
-static int subscribe_channel_handler(Client *c) {
+static int subscribe_handler(Client *c) {
 
     if (c->type == REQUEST) {
         if (!c->req->channel || c->req->channel_len == 0) {
@@ -327,6 +354,7 @@ static int subscribe_channel_handler(Client *c) {
                 c->reply->retained = NULL;
             }
 
+            // Update subscriptions for the client
             list_head_insert(c->subscriptions, chan->name);
         }
     }
@@ -335,7 +363,7 @@ static int subscribe_channel_handler(Client *c) {
 }
 
 
-static int unsubscribe_channel_handler(Client *c) {
+static int unsubscribe_handler(Client *c) {
 
     if (c->type == REQUEST) {
         if (!c->req->channel || c->req->channel_len == 0) {
@@ -373,9 +401,9 @@ static struct command commands_map[] = {
     {CLUSTER_JOIN_ACK, join_ack_handler},
     {REPLICA, replica_handler},
     {CONNECT, connect_handler},
-    {PUBLISH, publish_message_handler},
-    {SUBSCRIBE, subscribe_channel_handler},
-    {UNSUBSCRIBE, unsubscribe_channel_handler}
+    {PUBLISH, publish_handler},
+    {SUBSCRIBE, subscribe_handler},
+    {UNSUBSCRIBE, unsubscribe_handler}
 };
 
 
@@ -625,6 +653,7 @@ static int reply_handler(const int epollfd, Client *client) {
     } else {
 
         void *raw_subs = map_get(global.channels, reply->channel);
+        /* If not channel is found, we create it and store in the global map */
         if (!raw_subs) {
             Channel *channel = create_channel(reply->channel);
             map_put(global.channels, strdup(reply->channel), channel);
@@ -636,6 +665,17 @@ static int reply_handler(const int epollfd, Client *client) {
         sent = publish_message(chan, reply->qos, reply->retain, strdup(reply->data), 0);
         double elapsed = (clock() - tic) / CLOCKS_PER_SEC;
         int load = (sent / elapsed);
+
+        // Check for QOS level
+        if (reply->qos == 1) {
+            Response *puback = build_ack_res(PUBACK, 0x00);
+            // reply to original sender
+            Buffer *res = pack_response(puback);
+            if ((sendall(reply->fd, res->data, res->size, &sent)) < 0) {
+                perror("send(2): can't write on socket descriptor");
+                ret = -1;
+            }
+        }
         write_atomic(global.throughput, load);
     }
 
@@ -766,40 +806,6 @@ exit:
     free(evs);
 
     return NULL;
-}
-
-/* Parse header, require at least the first 5 bytes in order to read packet
-   type and total length that we need to recv to complete the packet */
-int parse_header(Ringbuffer *rbuf, char *bytearray, uint8_t *type) {
-
-    /* Check the size of the ring buffer, we need at least the first 5 bytes in
-       order to get the total length of the packet */
-    if (ringbuf_empty(rbuf) || ringbuf_size(rbuf) < (sizeof(uint32_t) + sizeof(uint8_t)))
-        return -1;
-
-    uint8_t *tmp = (uint8_t *) bytearray;
-
-    /* Try to read at least length of the packet */
-    for (uint8_t i = 0; i < sizeof(uint32_t) + sizeof(uint8_t); i++)
-        ringbuf_pop(rbuf, tmp++);
-
-    uint8_t *typ = (uint8_t *) bytearray;
-    uint32_t tlen = ntohl(*((uint32_t *) (bytearray + sizeof(uint8_t))));
-
-    /* If there's no bytes nr equal to the total size of the packet abort and
-       read again */
-    if (ringbuf_size(rbuf) < tlen - sizeof(uint32_t) - sizeof(uint8_t))
-        return tlen - sizeof(uint32_t) - sizeof(uint8_t) - ringbuf_size(rbuf);
-
-    /* Empty the rest of the ring buffer */
-    while ((tlen - sizeof(uint32_t) - sizeof(uint8_t)) > 0) {
-        ringbuf_pop(rbuf, tmp++);
-        --tlen;
-    }
-
-    *type = *typ;
-
-    return 0;
 }
 
 

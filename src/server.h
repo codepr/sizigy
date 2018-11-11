@@ -90,8 +90,8 @@ struct client {
 
 
 struct socks {
-    int epollfd;
-    int serversock;
+    const int epollfd;
+    const int serversock;
 };
 
 
@@ -115,7 +115,7 @@ struct reply {
 
 
 struct command {
-    int ctype;
+    const int ctype;
     int (*handler)(Client *);
 };
 
@@ -153,7 +153,6 @@ struct global {
 extern struct global global;
 
 
-int parse_header(Ringbuffer *, char *, uint8_t *);
 uint8_t *recv_packet(const int, Ringbuffer *, uint8_t *);
 int start_server(const char *, char *, int);
 

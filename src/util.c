@@ -178,7 +178,7 @@ void s_log(const uint8_t level, const char *fmt, ...) {
 
     /* Truncate message too long */
     memcpy(msg+MAX_LOG_SIZE, "...", 3);
-    msg[MAX_LOG_SIZE+3] = '\0';
+    msg[MAX_LOG_SIZE + 3] = '\0';
 
     // Just for standard output for now
     FILE *fp = stdout;
