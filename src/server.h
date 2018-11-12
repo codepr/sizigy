@@ -76,6 +76,7 @@ typedef struct reply Reply;
 struct client {
     uint8_t type;
     uint8_t status;
+    uint64_t last_action_time;
     const char *addr;
     int fd;
     int (*ctx_handler)(int, Client *);
@@ -147,6 +148,8 @@ struct global {
     Throttler *throttler;
     /* Epoll workers count */
     int workers;
+    /* Keepalive */
+    uint64_t keepalive;
 };
 
 

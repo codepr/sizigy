@@ -54,6 +54,8 @@
 #define PUBREC           0x10
 #define PUBREL           0x11
 #define PUBCOMP          0x12
+#define PINGREQ          0x13
+#define PINGRESP         0x14
 
 /* Deliverance guarantee */
 #define AT_MOST_ONCE  0x00
@@ -146,7 +148,7 @@ Buffer *pack_request(Request *);
 int8_t unpack_request(uint8_t *, Request *);
 Buffer *pack_response(Response *);
 int8_t unpack_response(uint8_t *, Response*);
-void free_packed(Buffer *);
+void free_buffer(Buffer *);
 
 #define build_ack_req(o, m) (build_ack_request(REQUEST, (o), 0, (m)))
 #define build_ack_res(o, m) (build_ack_response(RESPONSE, (o), (m)))

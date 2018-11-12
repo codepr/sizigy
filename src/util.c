@@ -158,7 +158,7 @@ const char *random_name(const size_t len) {
     node_name[length] = '\0';
 
     /* build name using random positions in the poll */
-    while(length--) {
+    while (length--) {
         node_name[i++] = pool[(rand() % strlen(pool))];
     }
 

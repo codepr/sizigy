@@ -1,5 +1,20 @@
+0.5.3 - 2018/12/09
+==================
+
+
+Features
+
+- Implemented a dead simple keepalive logic
+
+
+Fix
+
+- Fixed Reply union which caused shadowing of some fields
+
+
 0.5.2 - 2018/11/09
 ==================
+
 
 Fix
 
@@ -10,7 +25,7 @@ Fix
 ==================
 
 
-Feature
+Features
 
 - Add rudimentary retain mechanism, new subscriber receive most recent retained
   message on each topic they subscribe to

@@ -74,13 +74,16 @@ static int join_ack_handler(Client *);
 static int connect_handler(Client *);
 static int replica_handler(Client *);
 static int publish_handler(Client *);
+static int pingresp_handler(Client *);
 static int subscribe_handler(Client *);
 static int unsubscribe_handler(Client *);
 static void free_reply(Reply *);
 static int destroy_clients(void *, void *);
 static int destroy_channels(void *, void *);
 static int destroy_queue_data(void *, void *);
+static void *keepalive(void *);
 static void *worker(void *);
+static void *keepalive(void *);
 static Buffer *craft_response(Reply *, Response *, uint8_t );
 
 // Fixed size of the header of each packet, consists of essentially the first
@@ -275,6 +278,8 @@ static int connect_handler(Client *c) {
             reply_connack(c, c->fd, 0x00);
             DEBUG("Sending CONNACK to %s rc=0", c->req->sub_id);
         }
+
+        c->last_action_time = (uint64_t) time(NULL);
     }
 
     return 0;
@@ -311,6 +316,15 @@ static int publish_handler(Client *c) {
             add_reply(c, DATA_REPLY, c->req->qos, c->req->retain, c->fd,
                     strdup((char *) c->req->channel), strdup((char *) c->req->message));
         }
+    }
+    return 1;
+}
+
+
+static int pingresp_handler(Client *c) {
+
+    if (c->type == REQUEST) {
+        c->last_action_time = (uint64_t) time(NULL);
     }
     return 1;
 }
@@ -402,6 +416,7 @@ static struct command commands_map[] = {
     {REPLICA, replica_handler},
     {CONNECT, connect_handler},
     {PUBLISH, publish_handler},
+    {PINGRESP, pingresp_handler},
     {SUBSCRIBE, subscribe_handler},
     {UNSUBSCRIBE, unsubscribe_handler}
 };
@@ -463,6 +478,7 @@ static int request_handler(const int epollfd, Client *client) {
 
     uint8_t opcode;
     client->type = type;
+    client->last_action_time = (uint64_t) time(NULL);
 
     /* Link the correct structure to the client, according to the packet type
        received */
@@ -494,7 +510,7 @@ static int request_handler(const int epollfd, Client *client) {
     client->ctx_handler = reply_handler;
 
     // Set up epoll events
-    if (opcode != PUBREC) {
+    if (opcode != PUBREC && opcode != PINGRESP) {
         mod_epoll(epollfd, clientfd, EPOLLOUT, client);
     } else {
         client->ctx_handler = request_handler;
@@ -582,7 +598,7 @@ static int reply_handler(const int epollfd, Client *client) {
         }
         free(ack->header);
         free(ack);
-        free_packed(p_ack);
+        free_buffer(p_ack);
 
         /* In case of reply->retained we assume that the rc == 0 */
         if (reply->type == SUBACK_REPLY && reply->retained) {
@@ -599,7 +615,7 @@ static int reply_handler(const int epollfd, Client *client) {
             }
 
             free(channel);
-            free_packed(p);
+            free_buffer(p);
             free(r);
         }
 
@@ -648,7 +664,7 @@ static int reply_handler(const int epollfd, Client *client) {
             ret = -1;
         }
         free(join_ack);
-        free_packed(p_ack);
+        free_buffer(p_ack);
 
     } else {
 
@@ -729,6 +745,7 @@ static int accept_handler(const int epollfd, Client *server) {
     client->status = ONLINE;
     client->addr = strdup(ip_buff);
     client->fd = clientsock;
+    client->last_action_time = (uint64_t) time(NULL);
     client->ctx_handler = request_handler;
 
     const char *id = random_name(16);
@@ -754,6 +771,42 @@ static int accept_handler(const int epollfd, Client *server) {
     mod_epoll(epollfd, fd, EPOLLIN, server);
 
     return 0;
+}
+
+
+static int send_pingreq(void *t1, void *t2) {
+    int ret = MAP_OK;
+    map_entry *kv = (map_entry *) t2;
+    uint64_t now = (uint64_t) time(NULL);
+    Request *req = build_ack_req(PINGREQ, "");
+    Buffer *p = pack_request(req);
+    if (kv) {
+        // free value field
+        if (kv->val) {
+            Client *c = (Client *) kv->val;
+            if ((now - c->last_action_time) >= global.keepalive) {
+                DEBUG("Sending PINGREQ to %s", c->id);
+                int rc = sendall(c->fd, p->data, p->size, &(ssize_t) { 0 });
+                if (rc < 0)
+                    perror("can't send PINGREQ");
+            }
+        }
+    } else ret = MAP_ERR;
+
+    free(req->header);
+    free(req);
+    free_buffer(p);
+
+    return ret;
+}
+
+
+static void *keepalive(void *args) {
+    while (1) {
+        map_iterate2(global.clients, send_pingreq, NULL);
+        sleep(1);
+    }
+    return NULL;
 }
 
 /* Main worker function, his responsibility is to wait on events on a shared
@@ -876,6 +929,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     global.throughput = init_atomic();
     global.throttler = init_throttler();
     pthread_mutex_init(&(global.lock), NULL);
+    global.keepalive = 10;
 
     /* Initialize epollfd for server component */
     const int epollfd = epoll_create1(0);
@@ -926,6 +980,7 @@ int start_server(const char *addr, char *port, int node_fd) {
         .status = ONLINE,
         .addr = addr,
         .fd = fd,
+        .last_action_time = (uint64_t) time(NULL),
         .ctx_handler = accept_handler,
         .id = "server",
         .reply = NULL,
@@ -939,6 +994,7 @@ int start_server(const char *addr, char *port, int node_fd) {
         .status = ONLINE,
         .addr = addr,
         .fd = bfd,
+        .last_action_time = (uint64_t) time(NULL),
         .ctx_handler = accept_handler,
         .id = "bus",
         .reply = NULL,
@@ -979,6 +1035,7 @@ int start_server(const char *addr, char *port, int node_fd) {
         .addr = addr,
         .fd = node_fd,
         .ctx_handler = request_handler,
+        .last_action_time = (uint64_t) time(NULL),
         .id = "node",
         .reply = NULL,
         .subscriptions = list_create(),
@@ -995,8 +1052,12 @@ int start_server(const char *addr, char *port, int node_fd) {
         if (rc < 0)
             printf("Failed join\n");
         free(join_req_packet);
-        free_packed(p);
+        free_buffer(p);
     }
+
+    pthread_t keepalive_thread;
+
+    pthread_create(&keepalive_thread, NULL, keepalive, NULL);
 
     /* Use main thread as a worker too */
     worker(&fds);

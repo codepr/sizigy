@@ -148,6 +148,7 @@ Buffer *pack_request(Request *request) {
                     request->channel_len, request->message_len, request->channel, request->message);
             break;
         case QUIT:
+        case PINGREQ:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
             tlen = hdrlen + sizeof(uint16_t) + sizeof(uint64_t) + request->ack_len;
@@ -325,6 +326,7 @@ int8_t unpack_response(uint8_t *bytes, Response *r) {
             r->message[r->message_len] = '\0';
             break;
         case SUBACK:
+        case PINGRESP:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
             r->rc = ntohs(*(dlen + sizeof(uint32_t)));
@@ -465,7 +467,7 @@ Response *build_ack_response(uint8_t type, uint8_t opcode, uint8_t rc) {
 }
 
 
-void free_packed(Buffer *p) {
+void free_buffer(Buffer *p) {
     assert(p);
     free(p->data);
     free(p);

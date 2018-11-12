@@ -122,7 +122,7 @@ void store_message(Channel *channel, const uint64_t id,
         free(m);
         free(replica_r->header);
         free(replica_r);
-        free_packed(p);
+        free_buffer(p);
     }
 }
 
@@ -180,8 +180,8 @@ int publish_message(Channel *chan, uint8_t qos, uint8_t retain, void *message, i
         DEBUG("Sending PUBLISH to %s p=%s", sub->name, message);
         cursor = cursor->next;
     }
-    free_packed(p);
-    free_packed(p_ack);
+    free_buffer(p);
+    free_buffer(p_ack);
     free(response->header);
     free(response);
     free(channel);
