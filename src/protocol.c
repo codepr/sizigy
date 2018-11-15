@@ -135,7 +135,8 @@ Buffer *pack_request(Request *request) {
             // move index after data size value, where opcode start
             tlen = hdrlen + sizeof(uint16_t) + sizeof(uint8_t) + request->header->data_len;
             hdr = pack_header(request->header, tlen);
-            pack_connect_packet(hdr + hdrlen, request->sub_id_len, request->clean_session, request->sub_id);
+            pack_connect_packet(hdr + hdrlen,
+                    request->sub_id_len, request->clean_session, request->sub_id);
             break;
         case REPLICA:
         case PUBLISH:

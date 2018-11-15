@@ -37,16 +37,16 @@
 typedef int (*sendfunc)(void *, void *);
 
 
-typedef struct queue_item {
+typedef struct QueueItem {
     void *data;
-    struct queue_item *next;
-} queue_item;
+    struct QueueItem *next;
+} QueueItem;
 
 
 typedef struct Queue {
     unsigned long len;
-    queue_item *front;
-    queue_item *rear;
+    QueueItem *front;
+    QueueItem *rear;
     pthread_mutex_t lock;
     pthread_cond_t cond;
 } Queue;

@@ -35,7 +35,6 @@
 
 
 char *readline(char *prompt) {
-    /* char buffer[BUFSIZE]; */
     fputs(prompt, stdout);
     char *line = malloc(BUFSIZE), *linep = line;
     size_t lenmax = BUFSIZE, len = lenmax;
@@ -68,12 +67,6 @@ char *readline(char *prompt) {
     *line = '\0';
     linep[strlen(linep)-1] = '\0';
     return linep;
-    /* fgets(buffer, BUFSIZE, stdin); */
-    /* size_t buflen = strlen(buffer) + 1; */
-    /* char *cpy = malloc(buflen); */
-    /* strncpy(cpy, buffer, buflen - 2); */
-    /* cpy[strlen(cpy)] = '\0'; */
-    /* return cpy; */
 }
 
 

@@ -62,7 +62,7 @@ void release_queue(Queue *q) {
 void enqueue(Queue *q, void *data) {
 
     pthread_mutex_lock(&(q->lock));
-    queue_item *new_item = malloc(sizeof(queue_item));
+    QueueItem *new_item = malloc(sizeof(QueueItem));
 
     if (!new_item) {
         perror("malloc(3) failed");
@@ -95,7 +95,7 @@ void *dequeue(Queue * q) {
         pthread_cond_wait(&(q->cond), &(q->lock));
 
     void *item = NULL;
-    queue_item *del_item;
+    QueueItem *del_item;
     del_item = q->front;
     q->front = q->front->next;
     if (!q->front)
@@ -114,7 +114,7 @@ int send_queue(Queue *q, void *ptr, sendfunc f) {
     /* Dirty hack that works as a MVP solution */
     int ret = 0;
     uint64_t n = q->len;
-    queue_item *item = q->front;
+    QueueItem *item = q->front;
     while (item) {
         ret = f(item, ptr);
         item = item->next;

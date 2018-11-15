@@ -51,7 +51,7 @@ List *list_create(void);
 List *list_attach(List *, list_node *, unsigned long);
 void list_release(List *, int);
 List *list_head_insert(List *, void *);
-List *Listail_insert(List *, void *);
+List *list_tail_insert(List *, void *);
 list_node *list_remove_node(list_node *, list_node *, compare_func);
 
 

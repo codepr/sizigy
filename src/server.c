@@ -868,7 +868,7 @@ static int destroy_queue_data(void *t1, void *t2) {
         // free value field
         if (kv->val) {
             Channel *c = (Channel *) kv->val;
-            queue_item *item = c->messages->front;
+            QueueItem *item = c->messages->front;
             while (item) {
                 Message *m = (Message *) item->data;
                 if (m->payload)

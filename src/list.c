@@ -106,7 +106,7 @@ List *list_head_insert(List *l, void *val) {
  * Insert value at the back of the list
  * Complexity: O(1)
  */
-List *Listail_insert(List *l, void *val) {
+List *list_tail_insert(List *l, void *val) {
     list_node *new_node = malloc(sizeof(list_node));
     if (!new_node) {
         perror("malloc(3) failed");
