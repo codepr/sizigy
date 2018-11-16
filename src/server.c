@@ -93,7 +93,7 @@ static const int HEADLEN = sizeof(uint8_t) + sizeof(uint32_t);
 
 /* Parse header, require at least the first 5 bytes in order to read packet
    type and total length that we need to recv to complete the packet */
-uint8_t *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
+Buffer *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
 
     size_t n = 0;
     uint8_t read_all = 0;
@@ -121,13 +121,16 @@ uint8_t *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
     }
 
     /* Allocate a buffer to fit the entire packet */
-    uint8_t *buf = malloc(tlen);
+    Buffer *b = buffer_init(tlen);
+    /* uint8_t *buf = malloc(tlen); */
 
     /* Copy previous read part of the header (first 5 bytes) */
-    memcpy(buf, tmp, HEADLEN);
+    /* memcpy(buf, tmp, HEADLEN); */
+    memcpy(b->data, tmp, HEADLEN);
 
     /* Move forward pointer after HEADLEN bytes */
-    bytearray = buf + HEADLEN;
+    /* bytearray = buf + HEADLEN; */
+    bytearray = b->data + HEADLEN;
 
     /* Empty the rest of the ring buffer */
     while ((tlen - HEADLEN) > 0) {
@@ -137,7 +140,8 @@ uint8_t *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
 
     *type = *typ;
 
-    return buf;
+    /* return buf; */
+    return b;
 }
 
 
@@ -460,14 +464,15 @@ static int request_handler(const int epollfd, Client *client) {
        is achieved by using a standardized protocol, which send the size of the
        complete packet as the first 4 bytes. By knowing it we know if the packet is
        ready to be deserialized and used.*/
-    uint8_t *bytes = recv_packet(clientfd, rbuf, &type);
+    /* uint8_t *bytes = recv_packet(clientfd, rbuf, &type); */
+    Buffer *b = recv_packet(clientfd, rbuf, &type);
 
     if (type == REQUEST)
-        read_all = unpack_request((uint8_t *) bytes, &req);
+        read_all = unpack_request(b, &req);
     else if (type == RESPONSE)
-        read_all = unpack_response((uint8_t *) bytes, &res);
+        read_all = unpack_response(b, &res);
 
-    free(bytes);
+    /* free(bytes); */
 
     /* Free ring buffer as we alredy have all needed informations in memory */
     ringbuf_free(rbuf);
@@ -929,7 +934,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     global.throughput = init_atomic();
     global.throttler = init_throttler();
     pthread_mutex_init(&(global.lock), NULL);
-    global.keepalive = 10;
+    global.keepalive = 60;
 
     /* Initialize epollfd for server component */
     const int epollfd = epoll_create1(0);

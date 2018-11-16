@@ -78,6 +78,9 @@
 //    - publish     { id: int, channel: str, message: str, qos: int, deliver: int }
 
 
+#define HEADERLEN (2 * sizeof(uint8_t)) + (2 * sizeof(uint32_t))
+
+
 typedef struct {
     uint8_t type;
     uint8_t opcode;
@@ -134,9 +137,11 @@ typedef struct {
 } Response;
 
 
-/* Contains the byte array version of the protocol_packet_t and the size contained */
+/* Contains the byte array version of the protocol_packet_t and the size
+   contained */
 typedef struct {
-    ssize_t size;
+    size_t size;
+    size_t pos;
     uint8_t *data;
 } Buffer;
 
@@ -145,10 +150,30 @@ typedef struct {
    structure passed in as argument, allowing the caller to decide to allocate
    it or use a stack defined pointer */
 Buffer *pack_request(Request *);
-int8_t unpack_request(uint8_t *, Request *);
+int8_t unpack_request(Buffer *, Request *);
 Buffer *pack_response(Response *);
-int8_t unpack_response(uint8_t *, Response*);
+int8_t unpack_response(Buffer *, Response*);
 void free_buffer(Buffer *);
+
+
+Buffer *buffer_init(size_t);
+void buffer_destroy(Buffer *);
+
+
+// Reading data
+uint8_t read_uint8(Buffer *);
+uint16_t read_uint16(Buffer *);
+uint32_t read_uint32(Buffer *);
+uint64_t read_uint64(Buffer *);
+uint8_t *read_string(Buffer *, size_t);
+
+// Write data
+void write_uint8(Buffer *, uint8_t);
+void write_uint16(Buffer *, uint16_t);
+void write_uint32(Buffer *, uint32_t);
+void write_uint64(Buffer *, uint64_t);
+void write_string(Buffer *, uint8_t *);
+
 
 #define build_ack_req(o, m) (build_ack_request(REQUEST, (o), 0, (m)))
 #define build_ack_res(o, m) (build_ack_response(RESPONSE, (o), (m)))

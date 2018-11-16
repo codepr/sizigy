@@ -57,9 +57,9 @@ static int handle_request(const int epollfd, const int fd) {
        is achieved by using a standardized protocol, which send the size of the
        complete packet as the first 5 bytes. By knowing it we know if the packet is
        ready to be deserialized and used.*/
-    uint8_t *bytes = recv_packet(fd, rbuf, &type);
+    Buffer *bytes = recv_packet(fd, rbuf, &type);
 
-    uint8_t read_all = unpack_response((uint8_t *) bytes, &res);
+    uint8_t read_all = unpack_response(bytes, &res);
 
     free(bytes);
 

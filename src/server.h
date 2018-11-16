@@ -156,7 +156,7 @@ struct global {
 extern struct global global;
 
 
-uint8_t *recv_packet(const int, Ringbuffer *, uint8_t *);
+Buffer *recv_packet(const int, Ringbuffer *, uint8_t *);
 int start_server(const char *, char *, int);
 
 #endif

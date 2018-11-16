@@ -38,82 +38,52 @@
 #include "protocol.h"
 
 
-static uint8_t *pack_header(Header *h, uint32_t total_len) {
+static void pack_header(Header *, Buffer *);
+static void advance_pos(Buffer *, size_t);
 
-    // bytes to be allocated + size of the data field
-    uint8_t *raw = malloc(total_len);
-    if (!raw) oom("packing header");
 
-    uint8_t *type = raw;
-    uint8_t *tot = raw + sizeof(uint8_t);
-    uint8_t *opcode = tot + sizeof(uint32_t);
+static void pack_header(Header *h, Buffer *b) {
 
-    // fix index just after size of the data part
-    uint8_t *datalen = opcode + sizeof(uint8_t);
+    write_uint8(b, h->type);
+    write_uint32(b, b->size);
+    write_uint8(b, h->opcode);
+    write_uint32(b, h->data_len);
 
-    // pack the whole structure
-    *type = h->type;
-    *((uint32_t *) tot) = htonl(total_len);
-    *opcode = h->opcode;
-    *((uint32_t *) datalen) = htonl(h->data_len);
-
-    return raw;
 }
 
 
-static void pack_connect_packet(uint8_t *ptr,
-        uint16_t id_len, uint8_t clean_session, uint8_t *sub_id) {
+static void pack_connect_packet(Buffer *b,
+        uint8_t clean_session, uint8_t *sub_id) {
 
-    assert(ptr);
+    assert(b);
 
-    uint8_t *sublen = ptr;
-    uint8_t *cs = ptr + sizeof(uint16_t);
-    uint8_t *data = cs + sizeof(uint8_t);
-
-    *((uint16_t *) sublen) = htons(id_len);
-    *cs = clean_session;
-    memcpy(data, sub_id, id_len);
+    write_uint16(b, strlen((char *) sub_id));
+    write_uint8(b, clean_session);
+    write_string(b, sub_id);
 }
 
 
-static void pack_subscribe_packet(uint8_t *ptr, uint8_t qos, uint8_t retain,
-        uint16_t clen, uint32_t mlen, uint8_t *channel, uint8_t *message) {
+static void pack_subscribe_packet(Buffer *b, uint8_t qos,
+        uint8_t retain, uint8_t *channel, uint8_t *message) {
 
-    assert(ptr);
+    assert(b);
 
-    /* Set position pointers first */
-    uint8_t *channel_len = ptr;
-    uint8_t *message_len = ptr + sizeof(uint16_t);
-    uint8_t *q = message_len + sizeof(uint32_t);
-    uint8_t *ret = q + sizeof(uint8_t);
-    uint8_t *chan = ret + sizeof(uint8_t);
-    uint8_t *mex = chan + clen;
-
-    /* Assign values to them */
-    *((uint16_t *) channel_len) = htons(clen);
-    *((uint32_t *) message_len) = htonl(mlen);
-    *ret = retain;
-    *q = qos;
-
-    memcpy(chan, channel, clen);
-    if (mlen > 0)
-        memcpy(mex, message, mlen);
+    write_uint16(b, strlen((char *) channel));
+    write_uint32(b, strlen((char *) message));
+    write_uint8(b, retain);
+    write_uint8(b, qos);
+    write_string(b, channel);
+    write_string(b, message);
 }
 
 
-static void pack_ack_packet(uint8_t *ptr,
-        uint16_t data_len, uint64_t id, uint8_t *data) {
+static void pack_ack_packet(Buffer *b, uint64_t id, uint8_t *data) {
 
-    assert(ptr);
+    assert(b);
 
-    uint8_t *dlen = ptr;
-    uint8_t *mid = ptr + sizeof(uint16_t);
-    uint8_t *payload = mid + sizeof(uint64_t);
-
-    *((uint16_t *) dlen) = htons(data_len);
-    htonll(mid, id);
-
-    memcpy(payload, data, data_len);
+    write_uint16(b, strlen((char *) data));
+    write_uint64(b, id);
+    write_string(b, data);
 }
 
 
@@ -121,111 +91,90 @@ Buffer *pack_request(Request *request) {
 
     assert(request);
 
-    Buffer *packed = malloc(sizeof(Buffer));
-    if (!packed) oom("packing protocol_packet");
-
-    /* 2 unsigned char fields and 1 unsigned integer for len + another 1 for total len */
-    uint32_t hdrlen = (2 * sizeof(uint8_t)) + (2 * sizeof(uint32_t));
-
-    uint8_t *hdr = NULL;
     uint32_t tlen = 0;
+    Buffer *b = NULL;
 
     switch (request->header->opcode) {
         case CONNECT:
             // move index after data size value, where opcode start
-            tlen = hdrlen + sizeof(uint16_t) + sizeof(uint8_t) + request->header->data_len;
-            hdr = pack_header(request->header, tlen);
-            pack_connect_packet(hdr + hdrlen,
-                    request->sub_id_len, request->clean_session, request->sub_id);
+            tlen = HEADERLEN + sizeof(uint16_t) +
+                sizeof(uint8_t) + request->header->data_len;
+            b = buffer_init(tlen);
+            pack_header(request->header, b);
+            pack_connect_packet(b, request->clean_session, request->sub_id);
             break;
         case REPLICA:
         case PUBLISH:
         case SUBSCRIBE:
-            tlen = hdrlen + sizeof(uint16_t) + (2 * sizeof(uint8_t)) + \
-                   sizeof(uint32_t) + request->channel_len + \
-                   request->message_len;
-            hdr = pack_header(request->header, tlen);
-            pack_subscribe_packet(hdr + hdrlen, request->qos, request->retain,
-                    request->channel_len, request->message_len, request->channel, request->message);
+            tlen = HEADERLEN + sizeof(uint16_t) +
+                (2 * sizeof(uint8_t)) + sizeof(uint32_t) +
+                request->channel_len + request->message_len;
+            b = buffer_init(tlen);
+            pack_header(request->header, b);
+            pack_subscribe_packet(b, request->qos,
+                    request->retain, request->channel, request->message);
             break;
         case QUIT:
         case PINGREQ:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
-            tlen = hdrlen + sizeof(uint16_t) + sizeof(uint64_t) + request->ack_len;
-            hdr = pack_header(request->header, tlen);
-            pack_ack_packet(hdr + hdrlen, request->ack_len, request->id, request->ack_data);
+            tlen = HEADERLEN + sizeof(uint16_t) +
+                sizeof(uint64_t) + request->ack_len;
+            b = buffer_init(tlen);
+            pack_header(request->header, b);
+            pack_ack_packet(b, request->id, request->ack_data);
             break;
         case UNSUBSCRIBE:
-            tlen = hdrlen + request->header->data_len;
-            hdr = pack_header(request->header, tlen);
-            memcpy(hdr + hdrlen, request->data, request->header->data_len);
+            tlen = HEADERLEN + request->header->data_len;
+            b = buffer_init(tlen);
+            pack_header(request->header, b);
+            write_string(b, request->data);
             break;
     }
 
-    packed->size = tlen;
-    packed->data = hdr;
-
-    return packed;
+    return b;
 }
 
 
-int8_t unpack_request(uint8_t *bytes, Request *r) {
+int8_t unpack_request(Buffer *b, Request *r) {
 
-    assert(bytes);
+    assert(b);
     assert(r);
 
     /* Start unpacking bytes into the protocol_packet_t structure */
-    uint8_t *type = bytes;
-    uint8_t *tlen = type + sizeof(uint8_t);
-    uint8_t *opcode = tlen + sizeof(uint32_t);
-    uint8_t *dlen = opcode + sizeof(uint8_t);
-    size_t retain_offset = (2 * sizeof(uint32_t)) + sizeof(uint16_t) + sizeof(uint8_t);
-    size_t channel_offset = retain_offset + sizeof(uint8_t);
 
     r->header = malloc(sizeof(Header));
     if (!r->header) oom("unpacking request header");
 
-    r->header->type = *type;
-    r->header->opcode = *opcode;
-    r->header->data_len = ntohl(*((uint32_t *) dlen));
+    r->header->type = read_uint8(b);
+    advance_pos(b, sizeof(uint32_t));
+    r->header->opcode = read_uint8(b);
+    r->header->data_len = read_uint32(b);
 
     switch (r->header->opcode) {
         case CONNECT:
-            r->sub_id_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
-            r->clean_session = *(dlen + sizeof(uint32_t) + sizeof(uint16_t));
-            r->sub_id = malloc(r->sub_id_len + 1);
-            memcpy(r->sub_id, dlen + sizeof(uint32_t) +
-                    sizeof(uint16_t) + sizeof(uint8_t), r->header->data_len);
-            r->sub_id[r->header->data_len] = '\0';
+            r->sub_id_len = read_uint16(b);
+            r->clean_session = read_uint8(b);
+            r->sub_id = read_string(b, r->sub_id_len);
             break;
         case REPLICA:
         case PUBLISH:
         case SUBSCRIBE:
-            r->channel_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
-            r->message_len = ntohl(*((uint32_t *) (dlen + sizeof(uint32_t) + sizeof(uint16_t))));
-            r->qos = *(dlen + (2 * sizeof(uint32_t)) + sizeof(uint16_t));
-            r->retain = *(dlen + retain_offset);
-            r->channel = malloc(r->channel_len + 1);
-            memcpy(r->channel, dlen + channel_offset, r->channel_len);
-            r->channel[r->channel_len] = '\0';
-            r->message = malloc(r->message_len + 1);
-            memcpy(r->message, dlen + channel_offset + r->channel_len, r->message_len);
-            r->message[r->message_len] = '\0';
+            r->channel_len = read_uint16(b);
+            r->message_len = read_uint32(b);
+            r->qos = read_uint8(b);
+            r->retain = read_uint8(b);
+            r->channel = read_string(b, r->channel_len);
+            r->message = read_string(b, r->message_len);
             break;
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
-            r->ack_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
-            r->id = ntohll(dlen + sizeof(uint32_t) + sizeof(uint16_t));
-            r->ack_data = malloc(r->ack_len + 1);
-            memcpy(r->ack_data, dlen + sizeof(uint32_t) +
-                    sizeof(uint16_t) + sizeof(uint64_t), r->ack_len);
-            r->ack_data[r->ack_len] = '\0';
+            r->ack_len = read_uint16(b);
+            r->id = read_uint64(b);
+            r->ack_data = read_string(b, r->ack_len);
             break;
         case UNSUBSCRIBE:
-            r->data = malloc(r->header->data_len + 1);
-            memcpy(r->data, dlen + sizeof(uint32_t), r->header->data_len);
-            r->data[r->header->data_len] = '\0';
+            r->data = read_string(b, r->header->data_len);
             break;
     }
 
@@ -237,100 +186,70 @@ Buffer *pack_response(Response *response) {
 
     assert(response);
 
-    Buffer *packed = malloc(sizeof(Buffer));
-    if (!packed) oom("packing protocol_packet");
-
-    /* 2 unsigned char fields and 1 unsigned integer for len + another 1 for total len */
-    uint32_t headerlen = (2 * sizeof(uint8_t)) + (2 * sizeof(uint32_t));
-
-    uint8_t *hdr = NULL;
-    uint8_t *data = NULL;
-    uint16_t clen = response->channel_len;
-    uint32_t mlen = response->message_len;
-    uint32_t tlen = headerlen + response->header->data_len;
+    Buffer *b = NULL;
+    size_t tlen = 0;
 
     switch (response->header->opcode) {
         case REPLICA:
         case PUBLISH:
-            tlen = headerlen + sizeof(uint32_t) + clen + mlen +
-                sizeof(uint16_t) + (2 * sizeof(uint8_t)) + sizeof(uint64_t);
-            hdr = pack_header(response->header, tlen);
-            data = hdr + headerlen;
-            uint8_t *channel_len = data;
-            uint8_t *message_len = data + sizeof(uint16_t);
-            uint8_t *q = message_len + sizeof(uint32_t);
-            uint8_t *sc = q + sizeof(uint8_t);
-            uint8_t *mid = sc + sizeof(uint8_t);
-            uint8_t *chan = mid + sizeof(uint64_t);
-            uint8_t *mex = chan + clen;
-            *((uint16_t *) channel_len) = htons(clen);
-            *((uint32_t *) message_len) = htonl(mlen);
-            *q = response->qos;
-            *sc = response->sent_count;
-            htonll(mid, response->id);
-            memcpy(chan, response->channel, clen);
-            memcpy(mex, response->message, mlen);
+            tlen = HEADERLEN + sizeof(uint32_t) + response->channel_len +
+                response->message_len + sizeof(uint16_t) +
+                (2 * sizeof(uint8_t)) + sizeof(uint64_t);
+            b = buffer_init(tlen);
+            pack_header(response->header, b);
+            write_uint16(b, response->channel_len);
+            write_uint32(b, response->message_len);
+            write_uint8(b, response->qos);
+            write_uint8(b, response->sent_count);
+            write_uint64(b, response->id);
+            write_string(b, response->channel);
+            write_string(b, response->message);
             break;
         case CONNACK:
         case SUBACK:
         case PUBACK:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
-            tlen += sizeof(uint8_t);
-            hdr = pack_header(response->header, tlen);
-            data = hdr + headerlen;
-            *data = response->rc;
+            tlen = HEADERLEN + response->header->data_len + sizeof(uint8_t);
+            b = buffer_init(tlen);
+            pack_header(response->header, b);
+            write_uint8(b, response->rc);
             break;
     }
 
-    packed->size = tlen;
-    packed->data = hdr;
-
-    return packed;
+    return b;
 }
 
 
-int8_t unpack_response(uint8_t *bytes, Response *r) {
+int8_t unpack_response(Buffer *b, Response *r) {
 
     assert(r);
 
     /* Start unpacking bytes into the protocol_packet_t structure */
-    uint8_t *type = bytes;
-    uint8_t *tlen = bytes + sizeof(uint8_t);
-    uint8_t *opcode = tlen + sizeof(uint32_t);
-    uint8_t *dlen = opcode + sizeof(uint8_t);
-    size_t channel_pos = (2 * sizeof(uint32_t)) + sizeof(uint16_t) \
-                         + (2 * sizeof(uint8_t)) + sizeof(uint64_t);
-    size_t id_pos = (2 * sizeof(uint32_t)) + sizeof(uint16_t) + sizeof(uint8_t);
 
     r->header = malloc(sizeof(Header));
     if (!r->header) oom("unpacking response");
 
-    r->header->type = *type;
-    r->header->opcode = *opcode;
-    r->header->data_len = ntohl(*((uint32_t *) dlen));
+    r->header->type = read_uint8(b);
+    advance_pos(b, sizeof(uint32_t));
+    r->header->opcode = read_uint8(b);
+    r->header->data_len = read_uint32(b);
 
     switch (r->header->opcode) {
         case PUBLISH:
-            r->channel_len = ntohs(*((uint16_t *) (dlen + sizeof(uint32_t))));
-            r->message_len = ntohl(*((uint32_t *) (dlen \
-                            + sizeof(uint32_t) + sizeof(uint16_t))));
-            r->qos = *(dlen + (2 * sizeof(uint32_t)) + sizeof(uint16_t));
-            r->sent_count = *(dlen + id_pos);
-            r->id = ntohll(dlen + (2 * sizeof(uint32_t)) \
-                    + sizeof(uint16_t) + (2 * sizeof(uint8_t)));
-            r->channel = malloc(r->channel_len + 1);
-            memcpy(r->channel, dlen + channel_pos, r->channel_len);
-            r->channel[r->channel_len] = '\0';
-            r->message = malloc(r->message_len + 1);
-            memcpy(r->message, dlen + channel_pos + r->channel_len, r->message_len);
-            r->message[r->message_len] = '\0';
+            r->channel_len = read_uint16(b);
+            r->message_len = read_uint32(b);
+            r->qos = read_uint8(b);
+            r->sent_count = read_uint8(b);
+            r->id = read_uint64(b);
+            r->channel = read_string(b, r->channel_len);
+            r->message = read_string(b, r->message_len);
             break;
         case SUBACK:
         case PINGRESP:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
-            r->rc = ntohs(*(dlen + sizeof(uint32_t)));
+            r->rc = read_uint16(b);
             break;
     }
 
@@ -472,4 +391,101 @@ void free_buffer(Buffer *p) {
     assert(p);
     free(p->data);
     free(p);
+}
+
+
+/* Init Buffer data structure, to ease byte arrays handling */
+Buffer *buffer_init(size_t len) {
+    Buffer *b = malloc(sizeof(Buffer));
+    b->data = malloc(len);
+    if (!b || !b->data) oom("allocating memory for new buffer");
+    b->size = len;
+    b->pos = 0;
+    return b;
+}
+
+
+/* Destroy a previously allocated Buffer structure */
+void buffer_destroy(Buffer *b) {
+    b->size = b->pos = 0;
+    free(b->data);
+    free(b);
+}
+
+
+// Reading data
+uint8_t read_uint8(Buffer *b) {
+    uint8_t val = *(b->data + b->pos);
+    b->pos += sizeof(uint8_t);
+    return val;
+}
+
+uint16_t read_uint16(Buffer *b) {
+    uint16_t val = ntohs(*((uint16_t *) (b->data + b->pos)));
+    b->pos += sizeof(uint16_t);
+    return val;
+}
+
+
+uint32_t read_uint32(Buffer *b) {
+    uint32_t val = ntohl(*((uint32_t *) (b->data + b->pos)));
+    b->pos += sizeof(uint32_t);
+    return val;
+}
+
+
+uint64_t read_uint64(Buffer *b) {
+    uint64_t val = ntohll(b->data + b->pos);
+    b->pos += sizeof(uint64_t);
+    return val;
+}
+
+
+uint8_t *read_string(Buffer *b, size_t len) {
+    uint8_t *str = malloc(len + 1);
+    memcpy(str, b->data + b->pos, len);
+    str[len] = '\0';
+    b->pos += len;
+    return str;
+}
+
+
+// Write data
+void write_uint8(Buffer *b, uint8_t val) {
+    *(b->data + b->pos) = val;
+    b->pos += sizeof(uint8_t);
+}
+
+
+void write_uint16(Buffer *b, uint16_t val) {
+    *((uint16_t *) (b->data + b->pos)) = htons(val);
+    b->pos += sizeof(uint16_t);
+}
+
+
+void write_uint32(Buffer *b, uint32_t val) {
+    *((uint32_t *) (b->data + b->pos)) = htonl(val);
+    b->pos += sizeof(uint32_t);
+}
+
+
+void write_uint64(Buffer *b, uint64_t val) {
+    htonll(b->data + b->pos, val);
+    b->pos += sizeof(uint64_t);
+}
+
+
+void write_string(Buffer *b, uint8_t *str) {
+    size_t len = strlen((char *) str);
+    memcpy(b->data + b->pos, str, len);
+    b->pos += len;
+}
+
+
+void advance_pos(Buffer *b, size_t offset) {
+
+    assert(b);
+    assert(b->pos + offset <= b->size);
+
+    b->pos += offset;
 }
