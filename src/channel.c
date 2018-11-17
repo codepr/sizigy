@@ -70,7 +70,8 @@ void add_subscriber(Channel *chan, struct subscriber *subscriber) {
 
 void del_subscriber(Channel *chan, struct subscriber *subscriber) {
     list_node node = { subscriber, NULL };
-    chan->subscribers->head = list_remove_node(chan->subscribers->head, &node, sub_compare);
+    chan->subscribers->head =
+        list_remove_node(chan->subscribers->head, &node, sub_compare);
 }
 
 
@@ -122,7 +123,7 @@ void store_message(Channel *channel, const uint64_t id,
         free(m);
         free(replica_r->header);
         free(replica_r);
-        free_buffer(p);
+        buffer_destroy(p);
     }
 }
 
@@ -180,8 +181,8 @@ int publish_message(Channel *chan, uint8_t qos, uint8_t retain, void *message, i
         DEBUG("Sending PUBLISH to %s p=%s", sub->name, message);
         cursor = cursor->next;
     }
-    free_buffer(p);
-    free_buffer(p_ack);
+    buffer_destroy(p);
+    buffer_destroy(p_ack);
     free(response->header);
     free(response);
     free(channel);
@@ -197,5 +198,7 @@ void destroy_channel(Channel *chan) {
         list_release(chan->subscribers, 1);
     if (chan->messages)
         release_queue(chan->messages);
+    if (chan->retained)
+        free(chan->retained);
     free(chan);
 }

@@ -44,11 +44,12 @@ static void advance_pos(Buffer *, size_t);
 
 static void pack_header(Header *h, Buffer *b) {
 
+    assert(h);
+
     write_uint8(b, h->type);
     write_uint32(b, b->size);
     write_uint8(b, h->opcode);
     write_uint32(b, h->data_len);
-
 }
 
 
@@ -59,6 +60,7 @@ static void pack_connect_packet(Buffer *b,
 
     write_uint16(b, strlen((char *) sub_id));
     write_uint8(b, clean_session);
+    write_uint16(b, 60);  // FIXME: Placeholder
     write_string(b, sub_id);
 }
 
@@ -141,7 +143,7 @@ int8_t unpack_request(Buffer *b, Request *r) {
     assert(b);
     assert(r);
 
-    /* Start unpacking bytes into the protocol_packet_t structure */
+    /* Start unpacking bytes into the Request structure */
 
     r->header = malloc(sizeof(Header));
     if (!r->header) oom("unpacking request header");
@@ -155,6 +157,7 @@ int8_t unpack_request(Buffer *b, Request *r) {
         case CONNECT:
             r->sub_id_len = read_uint16(b);
             r->clean_session = read_uint8(b);
+            r->keepalive = read_uint16(b);
             r->sub_id = read_string(b, r->sub_id_len);
             break;
         case REPLICA:
@@ -208,6 +211,7 @@ Buffer *pack_response(Response *response) {
         case CONNACK:
         case SUBACK:
         case PUBACK:
+        case PINGRESP:
         case CLUSTER_JOIN:
         case CLUSTER_JOIN_ACK:
             tlen = HEADERLEN + response->header->data_len + sizeof(uint8_t);
@@ -290,6 +294,7 @@ Request *build_connect_request(uint8_t type,
     r->clean_session = clean_session;
     r->header->data_len = r->sub_id_len = strlen(sub_id);
     r->sub_id = (uint8_t *) sub_id;
+    r->keepalive = 60;  // FIXME: Placeholder
 
     return r;
 }
@@ -387,13 +392,6 @@ Response *build_ack_response(uint8_t type, uint8_t opcode, uint8_t rc) {
 }
 
 
-void free_buffer(Buffer *p) {
-    assert(p);
-    free(p->data);
-    free(p);
-}
-
-
 /* Init Buffer data structure, to ease byte arrays handling */
 Buffer *buffer_init(size_t len) {
     Buffer *b = malloc(sizeof(Buffer));
@@ -407,6 +405,8 @@ Buffer *buffer_init(size_t len) {
 
 /* Destroy a previously allocated Buffer structure */
 void buffer_destroy(Buffer *b) {
+    assert(b);
+    assert(b->data);
     b->size = b->pos = 0;
     free(b->data);
     free(b);
@@ -482,6 +482,7 @@ void write_string(Buffer *b, uint8_t *str) {
 }
 
 
+/* Advance internal position index of a Buffer by `offset` steps */
 void advance_pos(Buffer *b, size_t offset) {
 
     assert(b);

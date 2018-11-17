@@ -55,6 +55,8 @@
 #define reply_suback(c, fd, status) \
     (add_ack_reply((c), SUBACK_REPLY, (fd), (status)));
 
+#define reply_pingresp(c, fd) \
+    (add_ack_reply((c), PINGRESP_REPLY, (fd), 0x00));
 
 // Reference to the global structure, could be refactored lately to a more
 // structured configuration
@@ -74,7 +76,7 @@ static int join_ack_handler(Client *);
 static int connect_handler(Client *);
 static int replica_handler(Client *);
 static int publish_handler(Client *);
-static int pingresp_handler(Client *);
+static int pingreq_handler(Client *);
 static int subscribe_handler(Client *);
 static int unsubscribe_handler(Client *);
 static void free_reply(Reply *);
@@ -83,7 +85,6 @@ static int destroy_channels(void *, void *);
 static int destroy_queue_data(void *, void *);
 static void *keepalive(void *);
 static void *worker(void *);
-static void *keepalive(void *);
 static Buffer *craft_response(Reply *, Response *, uint8_t );
 
 // Fixed size of the header of each packet, consists of essentially the first
@@ -122,14 +123,11 @@ Buffer *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
 
     /* Allocate a buffer to fit the entire packet */
     Buffer *b = buffer_init(tlen);
-    /* uint8_t *buf = malloc(tlen); */
 
     /* Copy previous read part of the header (first 5 bytes) */
-    /* memcpy(buf, tmp, HEADLEN); */
     memcpy(b->data, tmp, HEADLEN);
 
     /* Move forward pointer after HEADLEN bytes */
-    /* bytearray = buf + HEADLEN; */
     bytearray = b->data + HEADLEN;
 
     /* Empty the rest of the ring buffer */
@@ -140,7 +138,6 @@ Buffer *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
 
     *type = *typ;
 
-    /* return buf; */
     return b;
 }
 
@@ -250,9 +247,7 @@ static int join_ack_handler(Client *c) {
         add_epoll(global.bepollfd, fd, client);
 
         free(mhost);
-    } /*else {
-        reply_ok(c, c->fd, 0);
-    }*/
+    }
     return 0;
 }
 
@@ -325,10 +320,12 @@ static int publish_handler(Client *c) {
 }
 
 
-static int pingresp_handler(Client *c) {
-
+static int pingreq_handler(Client *c) {
+    /* Update last activity timestamp for the client */
     if (c->type == REQUEST) {
+        reply_pingresp(c, c->fd);
         c->last_action_time = (uint64_t) time(NULL);
+        DEBUG("Sending PINGRESP to %s", c->id);
     }
     return 1;
 }
@@ -420,7 +417,7 @@ static struct command commands_map[] = {
     {REPLICA, replica_handler},
     {CONNECT, connect_handler},
     {PUBLISH, publish_handler},
-    {PINGRESP, pingresp_handler},
+    {PINGREQ, pingreq_handler},
     {SUBSCRIBE, subscribe_handler},
     {UNSUBSCRIBE, unsubscribe_handler}
 };
@@ -464,7 +461,6 @@ static int request_handler(const int epollfd, Client *client) {
        is achieved by using a standardized protocol, which send the size of the
        complete packet as the first 4 bytes. By knowing it we know if the packet is
        ready to be deserialized and used.*/
-    /* uint8_t *bytes = recv_packet(clientfd, rbuf, &type); */
     Buffer *b = recv_packet(clientfd, rbuf, &type);
 
     if (type == REQUEST)
@@ -472,7 +468,7 @@ static int request_handler(const int epollfd, Client *client) {
     else if (type == RESPONSE)
         read_all = unpack_response(b, &res);
 
-    /* free(bytes); */
+    buffer_destroy(b);
 
     /* Free ring buffer as we alredy have all needed informations in memory */
     ringbuf_free(rbuf);
@@ -490,6 +486,10 @@ static int request_handler(const int epollfd, Client *client) {
     if (type == REQUEST) {
         client->req = &req;
         opcode = req.header->opcode;
+        // Update KEEPALIVE value for the new connected client
+        if (opcode == CONNECT) {
+            client->keepalive = req.keepalive;
+        }
     } else {
         client->res = &res;
         opcode = res.header->opcode;
@@ -515,7 +515,7 @@ static int request_handler(const int epollfd, Client *client) {
     client->ctx_handler = reply_handler;
 
     // Set up epoll events
-    if (opcode != PUBREC && opcode != PINGRESP) {
+    if (opcode != PUBREC) {
         mod_epoll(epollfd, clientfd, EPOLLOUT, client);
     } else {
         client->ctx_handler = request_handler;
@@ -576,6 +576,10 @@ static Buffer *craft_response(Reply *r, Response *ack, uint8_t rc) {
            ack->header->opcode = PUBACK;
            ack->rc = rc;
            break;
+        case PINGRESP_REPLY:
+           ack->header->opcode = PINGRESP;
+           ack->rc = rc;
+           break;
     }
 
     return pack_response(ack);
@@ -594,7 +598,7 @@ static int reply_handler(const int epollfd, Client *client) {
        case of use */
     Buffer *p_ack = NULL;
 
-    if (reply->type >= CONNACK_REPLY && reply->type <= PUBACK_REPLY) {
+    if (reply->type >= CONNACK_REPLY && reply->type <= PINGRESP_REPLY) {
         Response *ack = build_ack_res(CONNACK, 0x00);
         p_ack = craft_response(reply, ack, 0x00);
         if ((sendall(reply->fd, p_ack->data, p_ack->size, &sent)) < 0) {
@@ -603,12 +607,11 @@ static int reply_handler(const int epollfd, Client *client) {
         }
         free(ack->header);
         free(ack);
-        free_buffer(p_ack);
+        buffer_destroy(p_ack);
 
         /* In case of reply->retained we assume that the rc == 0 */
         if (reply->type == SUBACK_REPLY && reply->retained) {
             Message *m = reply->retained;
-            printf("CHAN %s\n", m->channel);
             char *channel = append_string(m->channel, " ");
             Response *r = build_pub_res(m->qos, channel, m->payload, 0);
 
@@ -620,7 +623,7 @@ static int reply_handler(const int epollfd, Client *client) {
             }
 
             free(channel);
-            free_buffer(p);
+            buffer_destroy(p);
             free(r);
         }
 
@@ -669,7 +672,7 @@ static int reply_handler(const int epollfd, Client *client) {
             ret = -1;
         }
         free(join_ack);
-        free_buffer(p_ack);
+        buffer_destroy(p_ack);
 
     } else {
 
@@ -696,6 +699,9 @@ static int reply_handler(const int epollfd, Client *client) {
                 perror("send(2): can't write on socket descriptor");
                 ret = -1;
             }
+            free(puback->header);
+            free(puback);
+            buffer_destroy(res);
         }
         write_atomic(global.throughput, load);
     }
@@ -750,6 +756,7 @@ static int accept_handler(const int epollfd, Client *server) {
     client->status = ONLINE;
     client->addr = strdup(ip_buff);
     client->fd = clientsock;
+    client->keepalive = global.keepalive,  // FIXME: Placeholder
     client->last_action_time = (uint64_t) time(NULL);
     client->ctx_handler = request_handler;
 
@@ -779,36 +786,40 @@ static int accept_handler(const int epollfd, Client *server) {
 }
 
 
-static int send_pingreq(void *t1, void *t2) {
-    int ret = MAP_OK;
+static int check_client_status(void *t1, void *t2) {
+    /* int ret = MAP_OK; */
     map_entry *kv = (map_entry *) t2;
     uint64_t now = (uint64_t) time(NULL);
-    Request *req = build_ack_req(PINGREQ, "");
-    Buffer *p = pack_request(req);
+    /* Request *req = build_ack_req(PINGREQ, ""); */
+    /* Buffer *p = pack_request(req); */
     if (kv) {
         // free value field
         if (kv->val) {
             Client *c = (Client *) kv->val;
-            if ((now - c->last_action_time) >= global.keepalive) {
-                DEBUG("Sending PINGREQ to %s", c->id);
-                int rc = sendall(c->fd, p->data, p->size, &(ssize_t) { 0 });
-                if (rc < 0)
-                    perror("can't send PINGREQ");
+            if (c->status == ONLINE && (now - c->last_action_time) >= c->keepalive) {
+                DEBUG("Disconnecting client %s", c->id);
+                // TODO: Remove fd from epoll with an mod_epoll EPOLL_CTL_DEL
+                // call
+                close(c->fd);
+                c->status = OFFLINE;
             }
         }
-    } else ret = MAP_ERR;
+        return MAP_OK;
+    } //else ret = MAP_ERR;
 
-    free(req->header);
-    free(req);
-    free_buffer(p);
+    /* free(req->header); */
+    /* free(req); */
+    /* buffer_destroy(p); */
 
-    return ret;
+    return MAP_ERR;
 }
 
 
 static void *keepalive(void *args) {
+    /* Iterate through all clients in the global map every second in order to
+       check last activity timestamp */
     while (1) {
-        map_iterate2(global.clients, send_pingreq, NULL);
+        map_iterate2(global.clients, check_client_status, NULL);
         sleep(1);
     }
     return NULL;
@@ -984,6 +995,7 @@ int start_server(const char *addr, char *port, int node_fd) {
         .type = REQUEST,
         .status = ONLINE,
         .addr = addr,
+        .keepalive = global.keepalive,  // FIXME: Placeholder
         .fd = fd,
         .last_action_time = (uint64_t) time(NULL),
         .ctx_handler = accept_handler,
@@ -998,6 +1010,7 @@ int start_server(const char *addr, char *port, int node_fd) {
         .type = REQUEST,
         .status = ONLINE,
         .addr = addr,
+        .keepalive = global.keepalive,  // FIXME: Placeholder
         .fd = bfd,
         .last_action_time = (uint64_t) time(NULL),
         .ctx_handler = accept_handler,
@@ -1037,6 +1050,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     Client node = {
         .type = REQUEST,
         .status = ONLINE,
+        .keepalive = global.keepalive,  // FIXME: Placeholder
         .addr = addr,
         .fd = node_fd,
         .ctx_handler = request_handler,
@@ -1057,7 +1071,7 @@ int start_server(const char *addr, char *port, int node_fd) {
         if (rc < 0)
             printf("Failed join\n");
         free(join_req_packet);
-        free_buffer(p);
+        buffer_destroy(p);
     }
 
     pthread_t keepalive_thread;

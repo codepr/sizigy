@@ -95,6 +95,7 @@ typedef struct {
         struct {
             uint16_t sub_id_len;
             uint8_t *sub_id;
+            uint16_t keepalive;
             uint8_t clean_session;
         };
         /* Subscribe/publish request */
@@ -153,7 +154,6 @@ Buffer *pack_request(Request *);
 int8_t unpack_request(Buffer *, Request *);
 Buffer *pack_response(Response *);
 int8_t unpack_response(Buffer *, Response*);
-void free_buffer(Buffer *);
 
 
 Buffer *buffer_init(size_t);

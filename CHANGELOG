@@ -5,6 +5,8 @@
 Fix
 
 - Refactored serialization functions
+- Corrected KEEPALIVE behaviour, now clients sends PINGREQ on a time basis to
+  announce their healthy state
 
 
 0.5.3 - 2018/11/12

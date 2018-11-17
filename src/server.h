@@ -62,6 +62,7 @@ enum REPLY_TYPE {
     CONNACK_REPLY,
     SUBACK_REPLY,
     PUBACK_REPLY,
+    PINGRESP_REPLY,
     JACK_REPLY,
     DATA_REPLY
 };
@@ -76,6 +77,7 @@ typedef struct reply Reply;
 struct client {
     uint8_t type;
     uint8_t status;
+    uint16_t keepalive;
     uint64_t last_action_time;
     const char *addr;
     int fd;
