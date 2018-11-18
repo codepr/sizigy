@@ -26,13 +26,16 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef MAP_H
-#define MAP_H
+#ifndef HASHMAP_H
+#define HASHMAP_H
 
 
-#define MAP_OK   0
-#define MAP_ERR  -1
-#define MAP_FULL -2
+#include <pthread.h>
+
+
+#define HASHMAP_OK   0
+#define HASHMAP_ERR  -1
+#define HASHMAP_FULL -2
 #define CRC32(c, x) crc32(c, x)
 
 
@@ -45,29 +48,30 @@ typedef struct {
     void *key;
     void *val;
     unsigned int in_use : 1;
-} map_entry;
+} hashmap_entry;
 
 
 /*
- * An hashMap has some maximum size and current size, as well as the data to
+ * An Hashmap has some maximum size and current size, as well as the data to
  * hold.
  */
 typedef struct {
     unsigned long table_size;
     unsigned long size;
-    map_entry *entries;
-} Map;
+    hashmap_entry *entries;
+    pthread_mutex_t lock;
+} Hashmap;
 
 
-/* Map API */
-Map *map_create(void);
-void map_release(Map *);
-int map_put(Map *, void *, void *);
-void *map_get(Map *, void *);
-map_entry *map_get_entry(Map *, void *);
-int map_del(Map *, void *);
-int map_iterate2(Map *, func, void *);
-int map_iterate3(Map *, func3, void *, void *);
+/* Hashmap API */
+Hashmap *hashmap_create(void);
+void hashmap_release(Hashmap *);
+int hashmap_put(Hashmap *, void *, void *);
+void *hashmap_get(Hashmap *, void *);
+hashmap_entry *hashmap_get_entry(Hashmap *, void *);
+int hashmap_del(Hashmap *, void *);
+int hashmap_iterate2(Hashmap *, func, void *);
+int hashmap_iterate3(Hashmap *, func3, void *, void *);
 
 unsigned long crc32(const unsigned char *, unsigned int);
 

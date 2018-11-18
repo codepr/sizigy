@@ -30,7 +30,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
-#include "map.h"
+#include "hashmap.h"
 #include "util.h"
 #include "server.h"
 #include "network.h"
@@ -178,7 +178,7 @@ int publish_message(Channel *chan, uint8_t qos, uint8_t retain, void *message, i
                 perror("Can't publish");
             total_bytes_sent += sent;
         }
-        DEBUG("Sending PUBLISH to %s p=%s", sub->name, message);
+        DEBUG("[%p] Sending PUBLISH to %s p=%s", (void *) pthread_self(), sub->name, message);
         cursor = cursor->next;
     }
     buffer_destroy(p);

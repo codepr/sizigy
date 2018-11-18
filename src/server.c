@@ -69,6 +69,7 @@ static int accept_handler(const int , Client *);
 static int close_socket(void *, void *);
 static void add_reply(Client *, uint8_t,
         uint8_t, uint8_t, const int, char *, char *);
+static void free_reply(Reply *);
 static void add_ack_reply(Client *, uint8_t, const int, uint8_t);
 static int quit_handler(Client *);
 static int join_handler(Client *);
@@ -79,7 +80,6 @@ static int publish_handler(Client *);
 static int pingreq_handler(Client *);
 static int subscribe_handler(Client *);
 static int unsubscribe_handler(Client *);
-static void free_reply(Reply *);
 static int destroy_clients(void *, void *);
 static int destroy_channels(void *, void *);
 static int destroy_queue_data(void *, void *);
@@ -101,9 +101,15 @@ Buffer *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
 
     while (n < HEADLEN) {
         /* Read first 5 bytes to get the total len of the packet */
-        if ((n += recvbytes(clientfd, rbuf, read_all, HEADLEN)) < 0)
-            exit(EXIT_FAILURE);
+        if ((n += recvbytes(clientfd, rbuf, read_all, HEADLEN)) < 0) {
+            shutdown(clientfd, 0);
+            close(clientfd);
+            // TODO: remove client from global
+            return NULL;
+        }
     }
+
+    DEBUG("RINGBUFSIZE %d", ringbuf_size(rbuf));
 
     uint8_t tmp[ringbuf_size(rbuf)];
     uint8_t *bytearray = tmp;
@@ -115,10 +121,16 @@ Buffer *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
     uint8_t *typ = (uint8_t *) tmp;
     uint32_t tlen = ntohl(*((uint32_t *) (tmp + sizeof(uint8_t))));
 
+    DEBUG("TLEN %d", tlen);
+
     /* Read remaining bytes to complete the packet */
     while (ringbuf_size(rbuf) < tlen - HEADLEN) {
-        if ((n = recvbytes(clientfd, rbuf, read_all, tlen - HEADLEN)) < 0)
-            exit(EXIT_FAILURE);
+        if ((n = recvbytes(clientfd, rbuf, read_all, tlen - HEADLEN)) < 0) {
+            shutdown(clientfd, 0);
+            close(clientfd);
+            // TODO: remove client from global
+            return NULL;
+        }
     }
 
     /* Allocate a buffer to fit the entire packet */
@@ -146,7 +158,7 @@ Buffer *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
    subscriptions or global connected peer */
 static int close_socket(void *arg1, void *arg2) {
     int fd = *(int *) arg1;
-    map_entry *kv = (map_entry *) arg2;
+    hashmap_entry *kv = (hashmap_entry *) arg2;
     struct subscriber *sub = (struct subscriber *) kv->val;
     if (sub->fd == fd)
         close(sub->fd);
@@ -188,7 +200,7 @@ static int quit_handler(Client *c) {
     close(c->fd);
 
     /* Close all fds passed around the structures */
-    map_iterate2(global.channels, close_socket, NULL);
+    hashmap_iterate2(global.channels, close_socket, NULL);
     DEBUG("QUIT %s", c->id);
     return -1;
 }
@@ -241,8 +253,8 @@ static int join_ack_handler(Client *c) {
 
         global.peers = list_head_insert(global.peers, client);
 
-        /* Add new accepted server to the global map */
-        map_put(global.clients, name, client);
+        /* Add new accepted server to the global hashmap */
+        hashmap_put(global.clients, name, client);
         /* Add it to the epoll loop */
         add_epoll(global.bepollfd, fd, client);
 
@@ -262,15 +274,15 @@ static int connect_handler(Client *c) {
 
             char *id = append_string("C:", (const char *) c->req->sub_id);
             if (c->req->clean_session == 1) {
-                map_del(global.clients, c->id);
-                map_put(global.clients, id, c);
+                hashmap_del(global.clients, c->id);
+                hashmap_put(global.clients, id, c);
                 free(c->id);
                 c->id = id;
             } else {
-                /* Should check if global map contains an entry and return an
+                /* Should check if global hashmap contains an entry and return an
                    error code in case of failure, for now we just add the new
                    client */
-                map_put(global.clients, id, c);
+                hashmap_put(global.clients, id, c);
             }
 
             DEBUG("Received CONNECT id=%s clean_session=%d", c->req->sub_id, c->req->clean_session);
@@ -288,12 +300,12 @@ static int connect_handler(Client *c) {
 static int replica_handler(Client *c) {
     if (c->type == REQUEST) {
 
-        void *raw = map_get(global.channels, c->req->channel);
+        void *raw = hashmap_get(global.channels, c->req->channel);
         if (!raw) {
             Channel *channel = create_channel((char *) c->req->channel);
-            map_put(global.channels, strdup((char *) c->req->channel), channel);
+            hashmap_put(global.channels, strdup((char *) c->req->channel), channel);
         }
-        Channel *chan = (Channel *) map_get(global.channels, c->req->channel);
+        Channel *chan = (Channel *) hashmap_get(global.channels, c->req->channel);
 
         /* Add message to the channel */
         // XXX require new command packet for replica (e.g. save ID etc)
@@ -347,12 +359,12 @@ static int subscribe_handler(Client *c) {
 
             DEBUG("Sending SUBACK id=%s rc=0", c->id);
 
-            void *raw = map_get(global.channels, c->req->channel);
+            void *raw = hashmap_get(global.channels, c->req->channel);
             if (!raw) {
                 Channel *channel = create_channel((char *) c->req->channel);
-                map_put(global.channels, strdup((char *) c->req->channel), channel);
+                hashmap_put(global.channels, strdup((char *) c->req->channel), channel);
             }
-            Channel *chan = (Channel *) map_get(global.channels, c->req->channel);
+            Channel *chan = (Channel *) hashmap_get(global.channels, c->req->channel);
 
             struct subscriber *sub = malloc(sizeof(struct subscriber));
             if (!sub) oom("creating subscriber");
@@ -393,7 +405,7 @@ static int unsubscribe_handler(Client *c) {
 
             DEBUG("Sending SUBACK id=%s rc=1", c->id);
 
-            void *raw_chan = map_get(global.channels, c->req->channel);
+            void *raw_chan = hashmap_get(global.channels, c->req->channel);
 
             if (raw_chan) {
                 Channel *chan = (Channel *) raw_chan;
@@ -409,8 +421,8 @@ static int unsubscribe_handler(Client *c) {
     return 0;
 }
 
-/* Static command map */
-static struct command commands_map[] = {
+/* Static command hashmap */
+static struct command commands_hashmap[] = {
     {QUIT, quit_handler},
     {CLUSTER_JOIN, join_handler},
     {CLUSTER_JOIN_ACK, join_ack_handler},
@@ -423,8 +435,8 @@ static struct command commands_map[] = {
 };
 
 
-static int commands_map_len(void) {
-    return sizeof(commands_map) / sizeof(struct command);
+static int commands_hashmap_len(void) {
+    return sizeof(commands_hashmap) / sizeof(struct command);
 }
 
 
@@ -463,6 +475,13 @@ static int request_handler(const int epollfd, Client *client) {
        ready to be deserialized and used.*/
     Buffer *b = recv_packet(clientfd, rbuf, &type);
 
+    if (!b) {
+        client->ctx_handler = request_handler;
+        mod_epoll(epollfd, clientfd, EPOLLIN, client);
+        ringbuf_free(rbuf);
+        return 0;
+    }
+
     if (type == REQUEST)
         read_all = unpack_request(b, &req);
     else if (type == RESPONSE)
@@ -498,10 +517,10 @@ static int request_handler(const int epollfd, Client *client) {
     int free_reply = -1;
     int executed = 0;
 
-    // Loop through commands_map array to find the correct handler
-    for (int i = 0; i < commands_map_len(); i++) {
-        if (commands_map[i].ctype == opcode) {
-            free_reply = commands_map[i].handler(client);
+    // Loop through commands_hashmap array to find the correct handler
+    for (int i = 0; i < commands_hashmap_len(); i++) {
+        if (commands_hashmap[i].ctype == opcode) {
+            free_reply = commands_hashmap[i].handler(client);
             executed = 1;
         }
     }
@@ -515,12 +534,12 @@ static int request_handler(const int epollfd, Client *client) {
     client->ctx_handler = reply_handler;
 
     // Set up epoll events
-    if (opcode != PUBREC) {
+    if (opcode != PUBREC || executed == 0) {
         mod_epoll(epollfd, clientfd, EPOLLOUT, client);
     } else {
         client->ctx_handler = request_handler;
         mod_epoll(epollfd, clientfd, EPOLLIN, client);
-        if (free_reply > -1 && client->reply) {
+        if (executed != 0 && free_reply > -1 && client->reply) {
             free(client->reply);
             client->reply = NULL;
         }
@@ -590,8 +609,10 @@ static Buffer *craft_response(Reply *r, Response *ack, uint8_t rc) {
    request_handler routine */
 static int reply_handler(const int epollfd, Client *client) {
 
-    Reply *reply = client->reply;
     int ret = 0;
+    if (!client->reply) return ret;
+
+    Reply *reply = client->reply;
     ssize_t sent;
 
     /* Alloc on the heap a ACK response, will be manipulated according to the
@@ -676,14 +697,14 @@ static int reply_handler(const int epollfd, Client *client) {
 
     } else {
 
-        void *raw_subs = map_get(global.channels, reply->channel);
-        /* If not channel is found, we create it and store in the global map */
+        void *raw_subs = hashmap_get(global.channels, reply->channel);
+        /* If not channel is found, we create it and store in the global hashmap */
         if (!raw_subs) {
             Channel *channel = create_channel(reply->channel);
-            map_put(global.channels, strdup(reply->channel), channel);
+            hashmap_put(global.channels, strdup(reply->channel), channel);
         }
         /* Retrieve the channel to publish data to by name */
-        Channel *chan = (Channel *) map_get(global.channels, reply->channel);
+        Channel *chan = (Channel *) hashmap_get(global.channels, reply->channel);
 
         double tic = clock();
         sent = publish_message(chan, reply->qos, reply->retain, strdup(reply->data), 0);
@@ -773,8 +794,8 @@ static int accept_handler(const int epollfd, Client *server) {
         global.peers = list_head_insert(global.peers, client);
     }
 
-    /* Add new accepted server to the global map */
-    map_put(global.clients, name, client);
+    /* Add new accepted server to the global hashmap */
+    hashmap_put(global.clients, name, client);
 
     /* Add it to the epoll loop */
     add_epoll(epollfd, clientsock, client);
@@ -787,11 +808,8 @@ static int accept_handler(const int epollfd, Client *server) {
 
 
 static int check_client_status(void *t1, void *t2) {
-    /* int ret = MAP_OK; */
-    map_entry *kv = (map_entry *) t2;
+    hashmap_entry *kv = (hashmap_entry *) t2;
     uint64_t now = (uint64_t) time(NULL);
-    /* Request *req = build_ack_req(PINGREQ, ""); */
-    /* Buffer *p = pack_request(req); */
     if (kv) {
         // free value field
         if (kv->val) {
@@ -800,26 +818,23 @@ static int check_client_status(void *t1, void *t2) {
                 DEBUG("Disconnecting client %s", c->id);
                 // TODO: Remove fd from epoll with an mod_epoll EPOLL_CTL_DEL
                 // call
+                shutdown(c->fd, 0);
                 close(c->fd);
                 c->status = OFFLINE;
             }
         }
-        return MAP_OK;
-    } //else ret = MAP_ERR;
+        return HASHMAP_OK;
+    }
 
-    /* free(req->header); */
-    /* free(req); */
-    /* buffer_destroy(p); */
-
-    return MAP_ERR;
+    return HASHMAP_ERR;
 }
 
 
 static void *keepalive(void *args) {
-    /* Iterate through all clients in the global map every second in order to
+    /* Iterate through all clients in the global hashmap every second in order to
        check last activity timestamp */
     while (1) {
-        map_iterate2(global.clients, check_client_status, NULL);
+        hashmap_iterate2(global.clients, check_client_status, NULL);
         sleep(1);
     }
     return NULL;
@@ -848,7 +863,7 @@ static void *worker(void *args) {
                 /* An error has occured on this fd, or the socket is not
                    ready for reading */
                 perror ("epoll_wait(2)");
-                map_iterate2(global.channels, close_socket, NULL);
+                hashmap_iterate2(global.channels, close_socket, NULL);
 
                 close(evs[i].data.fd);
                 continue;
@@ -879,7 +894,7 @@ exit:
 
 
 static int destroy_queue_data(void *t1, void *t2) {
-    map_entry *kv = (map_entry *) t2;
+    hashmap_entry *kv = (hashmap_entry *) t2;
     if (kv) {
         // free value field
         if (kv->val) {
@@ -893,26 +908,26 @@ static int destroy_queue_data(void *t1, void *t2) {
                 item = item->next;
             }
         }
-    } else return MAP_ERR;
-    return MAP_OK;
+    } else return HASHMAP_ERR;
+    return HASHMAP_OK;
 }
 
 
 static int destroy_channels(void *t1, void *t2) {
-    map_entry *kv = (map_entry *) t2;
+    hashmap_entry *kv = (hashmap_entry *) t2;
     if (kv) {
         // free value field
         if (kv->val) {
             Channel *c = (Channel *) kv->val;
             destroy_channel(c);
         }
-    } else return MAP_ERR;
-    return MAP_OK;
+    } else return HASHMAP_ERR;
+    return HASHMAP_OK;
 }
 
 
 static int destroy_clients(void *t1, void *t2) {
-    map_entry *kv = (map_entry *) t2;
+    hashmap_entry *kv = (hashmap_entry *) t2;
     if (kv) {
         if (kv->val) {
             Client *c = (Client *) kv->val;
@@ -923,8 +938,8 @@ static int destroy_clients(void *t1, void *t2) {
             if (c->subscriptions)
                 list_release(c->subscriptions, 0);
         }
-    } else return MAP_ERR;
-    return MAP_OK;
+    } else return HASHMAP_ERR;
+    return HASHMAP_OK;
 }
 
 /*
@@ -937,9 +952,9 @@ int start_server(const char *addr, char *port, int node_fd) {
     /* Initialize global server object */
     global.loglevel = DEBUG;
     global.run = eventfd(0, EFD_NONBLOCK);
-    global.channels = map_create();
-    global.ack_waiting = map_create();
-    global.clients = map_create();
+    global.channels = hashmap_create();
+    global.ack_waiting = hashmap_create();
+    global.clients = hashmap_create();
     global.peers = list_create();
     global.next_id = init_atomic();  // counter to get message id, should be enclosed inside locks
     global.throughput = init_atomic();
@@ -1089,19 +1104,17 @@ int start_server(const char *addr, char *port, int node_fd) {
 
 cleanup:
     /* Free all resources allocated */
-    map_iterate2(global.channels, destroy_queue_data, NULL);
-    map_iterate2(global.channels, destroy_channels, NULL);
-    map_iterate2(global.clients, destroy_clients, NULL);
+    hashmap_iterate2(global.channels, destroy_queue_data, NULL);
+    hashmap_iterate2(global.channels, destroy_channels, NULL);
+    hashmap_iterate2(global.clients, destroy_clients, NULL);
     free(server.subscriptions);
     free(bus.subscriptions);
     free(node.subscriptions);
     list_release(global.peers, 1);
-    /* free(global.peers); */
     free(global.next_id);
     free(global.throughput);
     free(global.throttler);
     pthread_mutex_destroy(&(global.lock));
-    /* map_release(global.channels); */
     DEBUG("Bye\n");
     return 0;
 }

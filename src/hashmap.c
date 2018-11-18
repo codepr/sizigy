@@ -30,7 +30,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "map.h"
+#include "hashmap.h"
 
 
 const unsigned int INITIAL_SIZE = 256;
@@ -40,7 +40,7 @@ const unsigned int MAX_CHAIN_LENGTH = 8;
 /*
  * Hashing function for a string
  */
-static unsigned int hashmap_hash_int(Map *m, char *keystr) {
+static unsigned int hashmap_hash_int(Hashmap *m, char *keystr) {
 
     unsigned long key = CRC32((unsigned char *) (keystr), strlen(keystr));
 
@@ -63,11 +63,11 @@ static unsigned int hashmap_hash_int(Map *m, char *keystr) {
 
 /*
  * Return the integer of the location in entries to store the point to the item,
- * or MAP_FULL.
+ * or HASHMAP_FULL.
  */
-static int hashmap_hash(Map *in, void *key) {
+static int hashmap_hash(Hashmap *in, void *key) {
     /* If full, return immediately */
-    if (in->size >= (in->table_size / 2)) return MAP_FULL;
+    if (in->size >= (in->table_size / 2)) return HASHMAP_FULL;
     /* Find the best index */
     int curr = hashmap_hash_int(in, key);
     /* Linear probing */
@@ -81,20 +81,20 @@ static int hashmap_hash(Map *in, void *key) {
         curr = (curr + 1) % in->table_size;
     }
 
-    return MAP_FULL;
+    return HASHMAP_FULL;
 }
 
 
 /*
  * Doubles the size of the hashmap, and rehashes all the elements
  */
-static int hashmap_rehash(Map *m) {
+static int hashmap_rehash(Hashmap *m) {
     unsigned long old_size;
-    map_entry *curr;
+    hashmap_entry *curr;
 
     /* Setup the new elements */
-    map_entry *temp = calloc(2 * m->table_size, sizeof(map_entry));
-    if (!temp) return MAP_ERR;
+    hashmap_entry *temp = calloc(2 * m->table_size, sizeof(hashmap_entry));
+    if (!temp) return HASHMAP_ERR;
 
     /* Update the array */
     curr = m->entries;
@@ -112,48 +112,49 @@ static int hashmap_rehash(Map *m) {
         if (curr[i].in_use == 0)
             continue;
 
-        status = map_put(m, curr[i].key, curr[i].val);
-        if (status != MAP_OK)
+        status = hashmap_put(m, curr[i].key, curr[i].val);
+        if (status != HASHMAP_OK)
             return status;
     }
     free(curr);
-    return MAP_OK;
+    return HASHMAP_OK;
 }
 
 
 /*
- * Return an empty hashmap, or NULL on failure. The newly create hashMap is
+ * Return an empty hashmap, or NULL on failure. The newly create Hashmap is
  * dynamically allocated on the heap memory, so it must be released manually.
  */
-Map *map_create(void) {
-    Map *m = malloc(sizeof(Map));
+Hashmap *hashmap_create(void) {
+    Hashmap *m = malloc(sizeof(Hashmap));
     if(!m) return NULL;
 
-    m->entries = (map_entry *) calloc(INITIAL_SIZE, sizeof(map_entry));
+    m->entries = (hashmap_entry *) calloc(INITIAL_SIZE, sizeof(hashmap_entry));
     if(!m->entries) {
-        if (m) map_release(m);
+        if (m) hashmap_release(m);
         return NULL;
     }
 
     m->table_size = INITIAL_SIZE;
     m->size = 0;
+    pthread_mutex_init(&(m->lock), NULL);
 
     return m;
 }
 
 
 /*
- * Add a pointer to the hashMap with some key
+ * Add a pointer to the hashmap with some key
  */
-int map_put(Map *m, void *key, void *val) {
+int hashmap_put(Hashmap *m, void *key, void *val) {
     // Acquire writing lock
-    /* pthread_mutex_lock(&(m->wlock)); */
+    pthread_mutex_lock(&(m->lock));
     /* Find a place to put our value */
     int index = hashmap_hash(m, key);
-    while (index == MAP_FULL){
-        if (hashmap_rehash(m) == MAP_ERR) {
-            /* pthread_mutex_unlock(&(m->wlock)); */
-            return MAP_ERR;
+    while (index == HASHMAP_FULL){
+        if (hashmap_rehash(m) == HASHMAP_ERR) {
+            pthread_mutex_unlock(&(m->lock));
+            return HASHMAP_ERR;
         }
         index = hashmap_hash(m, key);
     }
@@ -165,33 +166,39 @@ int map_put(Map *m, void *key, void *val) {
         m->size++;
     }
 
-    return MAP_OK;
+    pthread_mutex_unlock(&(m->lock));
+
+    return HASHMAP_OK;
 }
 
 
 /*
- * Get your pointer out of the hashMap with a key
+ * Get your pointer out of the hashmap with a key
  */
-void *map_get(Map *m, void *key) {
+void *hashmap_get(Hashmap *m, void *key) {
+    pthread_mutex_lock(&(m->lock));
     /* Find data location */
     int curr = hashmap_hash_int(m, key);
     /* Linear probing, if necessary */
     for (int i = 0; i < MAX_CHAIN_LENGTH; i++){
         if (m->entries[curr].in_use == 1) {
-            if (strcmp(m->entries[curr].key, key) == 0)
+            if (strcmp(m->entries[curr].key, key) == 0) {
+                pthread_mutex_unlock(&(m->lock));
                 return (m->entries[curr].val);
+            }
         }
         curr = (curr + 1) % m->table_size;
     }
+    pthread_mutex_unlock(&(m->lock));
     /* Not found */
     return NULL;
 }
 
 
 /*
- * Return the key-value pair represented by a key in the map
+ * Return the key-value pair represented by a key in the hashmap
  */
-map_entry *map_get_entry(Map *m, void *key) {
+hashmap_entry *hashmap_get_entry(Hashmap *m, void *key) {
     /* Find data location */
     int curr = hashmap_hash_int(m, key);
 
@@ -210,11 +217,11 @@ map_entry *map_get_entry(Map *m, void *key) {
 
 
 /*
- * Remove an element with that key from the map
+ * Remove an element with that key from the hashmap
  */
-int map_del(Map *m, void *key) {
+int hashmap_del(Hashmap *m, void *key) {
     // Acquire writing lock
-    /* pthread_mutex_lock(&(m->wlock)); */
+    pthread_mutex_lock(&(m->lock));
     /* Find key */
     int curr = hashmap_hash_int(m, key);
     /* Linear probing, if necessary */
@@ -227,14 +234,15 @@ int map_del(Map *m, void *key) {
                 m->entries[curr].in_use = 0;
                 /* Reduce the size */
                 m->size--;
-                /* pthread_mutex_unlock(&(m->wlock)); */
-                return MAP_OK;
+                pthread_mutex_unlock(&(m->lock));
+                return HASHMAP_OK;
             }
         }
         curr = (curr + 1) % m->table_size;
     }
+    pthread_mutex_unlock(&(m->lock));
     /* Data not found */
-    return MAP_ERR;
+    return HASHMAP_ERR;
 }
 
 
@@ -243,18 +251,18 @@ int map_del(Map *m, void *key) {
  * additional any_t argument is passed to the function as its first
  * argument and the pair is the second.
  */
-int map_iterate2(Map *m, func f, void *arg1) {
+int hashmap_iterate2(Hashmap *m, func f, void *arg1) {
     /* On empty hashmap, return immediately */
-    if (m->size <= 0) return MAP_ERR;
+    if (m->size <= 0) return HASHMAP_ERR;
     /* Linear probing */
     for (int i = 0; i < m->table_size; i++) {
         if (m->entries[i].in_use != 0) {
-            map_entry data = m->entries[i];
+            hashmap_entry data = m->entries[i];
             int status = f(arg1, &data);
-            if (status != MAP_OK) return status;
+            if (status != HASHMAP_OK) return status;
         }
     }
-    return MAP_OK;
+    return HASHMAP_OK;
 }
 
 
@@ -263,25 +271,25 @@ int map_iterate2(Map *m, func f, void *arg1) {
  * additional any_t argument is passed to the function as its first
  * argument and the pair is the second.
  */
-int map_iterate3(Map *m, func3 f, void *arg1, void *arg2) {
+int hashmap_iterate3(Hashmap *m, func3 f, void *arg1, void *arg2) {
     /* On empty hashmap, return immediately */
-    if (m->size <= 0) return MAP_ERR;
+    if (m->size <= 0) return HASHMAP_ERR;
     /* Linear probing */
     for (int i = 0; i < m->table_size; i++) {
         if (m->entries[i].in_use != 0) {
-            map_entry data = m->entries[i];
+            hashmap_entry data = m->entries[i];
             int status = f(arg1, arg2, &data);
-            if (status != MAP_OK) return status;
+            if (status != HASHMAP_OK) return status;
         }
     }
-    return MAP_OK;
+    return HASHMAP_OK;
 }
 
 
-/* callback function used with iterate to clean up the hashMap */
+/* callback function used with iterate to clean up the hashmap */
 static int destroy(void *t1, void *t2) {
 
-    map_entry *kv = (map_entry *) t2;
+    hashmap_entry *kv = (hashmap_entry *) t2;
 
     if (kv) {
         // free key field
@@ -290,14 +298,15 @@ static int destroy(void *t1, void *t2) {
         // free value field
         if (kv->val)
             free(kv->val);
-    } else return MAP_ERR;
+    } else return HASHMAP_ERR;
 
-    return MAP_OK;
+    return HASHMAP_OK;
 }
 
-/* Deallocate the hashMap */
-void map_release(Map *m){
-    map_iterate2(m, destroy, NULL);
+/* Deallocate the hashmap */
+void hashmap_release(Hashmap *m){
+    pthread_mutex_destroy(&m->lock);
+    hashmap_iterate2(m, destroy, NULL);
     if (m) {
         if (m->entries)
             free(m->entries);

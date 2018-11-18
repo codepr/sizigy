@@ -32,7 +32,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <pthread.h>
-#include "map.h"
+#include "hashmap.h"
 #include "util.h"
 #include "list.h"
 #include "ringbuf.h"
@@ -134,12 +134,12 @@ struct global {
     int bepollfd;
     /* Atomic auto-increment unsigned long long int to get the next message ID */
     Atomic *next_id;
-    /* Channels mapping */
-    Map *channels;
-    /* ACK awaiting mapping fds (Unused) */
-    Map *ack_waiting;
+    /* Channels hashmapping */
+    Hashmap *channels;
+    /* ACK awaiting hashmapping fds (Unused) */
+    Hashmap *ack_waiting;
     /* Tracking clients */
-    Map *clients;
+    Hashmap *clients;
     /* Peers connected */
     List *peers;
     /* Global lock to avoid race conditions on critical shared parts */
