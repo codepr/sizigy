@@ -8,10 +8,10 @@ SRC=src/hashmap.c 		\
 	src/list.c		\
 	src/queue.c		\
 	src/server.c	\
-	src/channel.c   \
 	src/ringbuf.c	\
 	src/network.c	\
-	src/protocol.c
+	src/protocol.c  \
+	src/sizigy.c
 
 sizigy: $(SRC)
 	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(SRC) src/main.c -o $(BIN)/sizigy \

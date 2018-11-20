@@ -66,16 +66,16 @@
 //
 //  - header { type: int, opcode: int }
 //    - connect   { id: str, clean_session: int }
-//    - subscribe   { channel: str, qos: int }
-//    - unsubscribe { channel: str }
-//    - publish     { channel: str, message: str, qos: int }
+//    - subscribe   { topic: str, qos: int }
+//    - unsubscribe { topic: str }
+//    - publish     { topic: str, message: str, qos: int }
 //    - ack         { id: int, data: str }
 //
 // response:
 //
 //  - header { type: int, opcode: int }
 //    - ack/nack    { data: str }
-//    - publish     { id: int, channel: str, message: str, qos: int, deliver: int }
+//    - publish     { id: int, topic: str, message: str, qos: int, deliver: int }
 
 
 #define HEADERLEN (2 * sizeof(uint8_t)) + (2 * sizeof(uint32_t))
@@ -100,11 +100,11 @@ typedef struct {
         };
         /* Subscribe/publish request */
         struct {
-            uint16_t channel_len;
+            uint16_t topic_len;
             uint32_t message_len;
             uint8_t qos;
             uint8_t retain;
-            uint8_t *channel;
+            uint8_t *topic;
             uint8_t *message;
         };
         /* Ack request */
@@ -124,12 +124,12 @@ typedef struct {
     union {
         /* Publish response */
         struct {
-            uint16_t channel_len;
+            uint16_t topic_len;
             uint32_t message_len;
             uint8_t qos;
             uint8_t sent_count;
             uint64_t id;
-            uint8_t *channel;
+            uint8_t *topic;
             uint8_t *message;
         };
         /* Ack/Nack */
@@ -156,7 +156,7 @@ Buffer *pack_response(Response *);
 int8_t unpack_response(Buffer *, Response*);
 
 
-Buffer *buffer_init(size_t);
+Buffer *buffer_init(const size_t);
 void buffer_destroy(Buffer *);
 
 
@@ -181,12 +181,12 @@ void write_string(Buffer *, uint8_t *);
 #define build_pub_req(q, c, m) (build_subscribe_request(REQUEST, PUBLISH, (q), (c), (m), 0))
 #define build_pub_res(q, c, m, i) (build_publish_response(RESPONSE, PUBLISH, (q), (c), (m), (i)))
 
-Request *build_ack_request(uint8_t, uint8_t, uint64_t, char *);
-Request *build_connect_request(uint8_t, uint8_t, uint8_t, char *);
-Request *build_unsubscribe_request(uint8_t, uint8_t, char *);
-Request *build_subscribe_request(uint8_t, uint8_t, uint8_t, char *, char *);
-Response *build_publish_response(uint8_t, uint8_t, uint8_t, char *, char *, uint8_t);
-Response *build_ack_response(uint8_t, uint8_t, uint8_t);
+Request *build_ack_request(const uint8_t, const uint8_t, const uint64_t, const uint8_t *);
+Request *build_connect_request(const uint8_t, const uint8_t, const uint8_t, const uint8_t *);
+Request *build_unsubscribe_request(const uint8_t, const uint8_t, const uint8_t *);
+Request *build_subscribe_request(const uint8_t, const uint8_t, const uint8_t, const uint8_t *, const uint8_t *);
+Response *build_publish_response(const uint8_t, const uint8_t, const uint8_t, const uint8_t *, const uint8_t *, const uint8_t);
+Response *build_ack_response(const uint8_t, const uint8_t, const uint8_t);
 
 
 #endif

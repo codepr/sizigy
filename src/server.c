@@ -45,7 +45,7 @@
 #include <arpa/inet.h>
 #include "util.h"
 #include "server.h"
-#include "channel.h"
+/* #include "topic.h" */
 #include "network.h"
 
 
@@ -63,25 +63,25 @@
 struct global global;
 
 
-static int reply_handler(const int, Client *);
-static int request_handler(const int, Client *);
-static int accept_handler(const int , Client *);
+static int reply_handler(SizigyDB *, Client *);
+static int request_handler(SizigyDB *, Client *);
+static int accept_handler(SizigyDB *, Client *);
 static int close_socket(void *, void *);
 static void add_reply(Client *, uint8_t,
-        uint8_t, uint8_t, const int, char *, char *);
+        uint8_t, uint8_t, const int, const uint8_t *, const uint8_t *);
 static void free_reply(Reply *);
 static void add_ack_reply(Client *, uint8_t, const int, uint8_t);
-static int quit_handler(Client *);
-static int join_handler(Client *);
-static int join_ack_handler(Client *);
-static int connect_handler(Client *);
-static int replica_handler(Client *);
-static int publish_handler(Client *);
-static int pingreq_handler(Client *);
-static int subscribe_handler(Client *);
-static int unsubscribe_handler(Client *);
+static int quit_handler(SizigyDB *, Client *);
+static int join_handler(SizigyDB *, Client *);
+static int join_ack_handler(SizigyDB *, Client *);
+static int connect_handler(SizigyDB *, Client *);
+static int replica_handler(SizigyDB *, Client *);
+static int publish_handler(SizigyDB *, Client *);
+static int pingreq_handler(SizigyDB *, Client *);
+static int subscribe_handler(SizigyDB *, Client *);
+static int unsubscribe_handler(SizigyDB *, Client *);
 static int destroy_clients(void *, void *);
-static int destroy_channels(void *, void *);
+static int destroy_topics(void *, void *);
 static int destroy_queue_data(void *, void *);
 static void *keepalive(void *);
 static void *worker(void *);
@@ -101,15 +101,18 @@ Buffer *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
 
     while (n < HEADLEN) {
         /* Read first 5 bytes to get the total len of the packet */
-        if ((n += recvbytes(clientfd, rbuf, read_all, HEADLEN)) < 0) {
+        n += recvbytes(clientfd, rbuf, read_all, HEADLEN);
+        if (n < 0) {
             shutdown(clientfd, 0);
             close(clientfd);
             // TODO: remove client from global
             return NULL;
+        } else if (n == 0) {
+            return NULL;
         }
     }
 
-    DEBUG("RINGBUFSIZE %d", ringbuf_size(rbuf));
+    /* DEBUG("RINGBUFSIZE %d", ringbuf_size(rbuf)); */
 
     uint8_t tmp[ringbuf_size(rbuf)];
     uint8_t *bytearray = tmp;
@@ -121,7 +124,7 @@ Buffer *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
     uint8_t *typ = (uint8_t *) tmp;
     uint32_t tlen = ntohl(*((uint32_t *) (tmp + sizeof(uint8_t))));
 
-    DEBUG("TLEN %d", tlen);
+    /* DEBUG("TLEN %d", tlen); */
 
     /* Read remaining bytes to complete the packet */
     while (ringbuf_size(rbuf) < tlen - HEADLEN) {
@@ -159,16 +162,18 @@ Buffer *recv_packet(const int clientfd, Ringbuffer *rbuf, uint8_t *type) {
 static int close_socket(void *arg1, void *arg2) {
     int fd = *(int *) arg1;
     hashmap_entry *kv = (hashmap_entry *) arg2;
-    struct subscriber *sub = (struct subscriber *) kv->val;
-    if (sub->fd == fd)
+    Client *sub = (Client *) kv->val;
+    if (sub->fd == fd) {
+        shutdown(sub->fd, 0);
         close(sub->fd);
+    }
     return 0;
 }
 
 
 /* Build a reply object and link it to the Client pointer */
 static void add_reply(Client *c, uint8_t type, uint8_t qos,
-        uint8_t retain, const int fd, char *channel, char *message) {
+        uint8_t retain, const int fd, const uint8_t *topic, const uint8_t *message) {
 
     Reply *r = malloc(sizeof(Reply));
     if (!r) oom("adding reply");
@@ -178,7 +183,7 @@ static void add_reply(Client *c, uint8_t type, uint8_t qos,
     r->fd = fd;
     r->retain = retain;
     r->data = message;
-    r->channel = channel;
+    r->topic = topic;
     c->reply = r;
 }
 
@@ -194,36 +199,37 @@ static void add_ack_reply(Client *c, uint8_t type, const int fd, uint8_t rc) {
 }
 
 
-static int quit_handler(Client *c) {
+static int quit_handler(SizigyDB *db, Client *c) {
 
     shutdown(c->fd, 0);
     close(c->fd);
 
     /* Close all fds passed around the structures */
-    hashmap_iterate2(global.channels, close_socket, NULL);
+    hashmap_iterate2(db->topics, close_socket, NULL);
     DEBUG("QUIT %s", c->id);
     return -1;
 }
 
 
-static int join_handler(Client *c) {
+static int join_handler(SizigyDB *db, Client *c) {
     if (c->type == REQUEST) {
 
         /* XXX Dirty hack: Request of client contains the client bus listening port */
-        add_reply(c, JACK_REPLY, 0, 0, c->fd, (char *) c->req->ack_data, c->id);
+        add_reply(c, JACK_REPLY, 0, 0, c->fd,
+                c->req->ack_data, (const uint8_t *) c->id);
 
         // XXX for now just insert pointer to client struct
-        global.peers = list_head_insert(global.peers, c);
+        db->peers = list_head_insert(db->peers, c);
         DEBUG("CLUSTER_JOIN from %s at %s:%s request accepted", c->id, c->addr, c->req->ack_data);
     }
     return 0;
 }
 
 /* TODO Should be removed, or at least incorporated with join_handler as a response */
-static int join_ack_handler(Client *c) {
+static int join_ack_handler(SizigyDB *db, Client *c) {
     if (c->type == REQUEST) {
         // XXX for now just insert pointer to client struct
-        global.peers = list_head_insert(global.peers, c);
+        db->peers = list_head_insert(db->peers, c);
         DEBUG("Joined cluster, new member at: %s", c->req->ack_data);
 
         /* Extract hostname and port from the ack payload in order to connect
@@ -251,12 +257,12 @@ static int join_ack_handler(Client *c) {
         client->reply = NULL;
         client->subscriptions = list_create();
 
-        global.peers = list_head_insert(global.peers, client);
+        db->peers = list_head_insert(db->peers, client);
 
         /* Add new accepted server to the global hashmap */
-        hashmap_put(global.clients, name, client);
+        hashmap_put(db->clients, name, client);
         /* Add it to the epoll loop */
-        add_epoll(global.bepollfd, fd, client);
+        add_epoll(db->bepollfd, fd, client);
 
         free(mhost);
     }
@@ -264,7 +270,7 @@ static int join_ack_handler(Client *c) {
 }
 
 
-static int connect_handler(Client *c) {
+static int connect_handler(SizigyDB *db, Client *c) {
 
     if (c->type == REQUEST) {
         if (!c->req->sub_id || c->req->sub_id_len == 0) {
@@ -274,15 +280,15 @@ static int connect_handler(Client *c) {
 
             char *id = append_string("C:", (const char *) c->req->sub_id);
             if (c->req->clean_session == 1) {
-                hashmap_del(global.clients, c->id);
-                hashmap_put(global.clients, id, c);
+                del_client(db, c);
                 free(c->id);
                 c->id = id;
+                add_client(db, c);
             } else {
                 /* Should check if global hashmap contains an entry and return an
                    error code in case of failure, for now we just add the new
                    client */
-                hashmap_put(global.clients, id, c);
+                add_client(db, c);
             }
 
             DEBUG("Received CONNECT id=%s clean_session=%d", c->req->sub_id, c->req->clean_session);
@@ -290,99 +296,98 @@ static int connect_handler(Client *c) {
             DEBUG("Sending CONNACK to %s rc=0", c->req->sub_id);
         }
 
-        c->last_action_time = (uint64_t) time(NULL);
+        update_client_last_action(c);
     }
 
     return 0;
 }
 
 
-static int replica_handler(Client *c) {
+static int replica_handler(SizigyDB *db, Client *c) {
+
     if (c->type == REQUEST) {
 
-        void *raw = hashmap_get(global.channels, c->req->channel);
-        if (!raw) {
-            Channel *channel = create_channel((char *) c->req->channel);
-            hashmap_put(global.channels, strdup((char *) c->req->channel), channel);
+        Topic *t;
+        void *raw;
+        if ((raw = hashmap_get(db->topics, c->req->topic))) {
+            t = (Topic *) raw;
+        } else {
+            t = create_topic((char *) c->req->topic);
+            hashmap_put(db->topics, strdup((char *) c->req->topic), t);
         }
-        Channel *chan = (Channel *) hashmap_get(global.channels, c->req->channel);
 
-        /* Add message to the channel */
+        /* Add message to the topic */
         // XXX require new command packet for replica (e.g. save ID etc)
-        store_message(chan, 0, c->req->qos, 0, (char *) c->req->message, 0);
+        store_message(t, 0, c->req->qos, 0, c->req->message, 0);
 
-        DEBUG("REPLICA channel=%s id=%d qos=%d message=%s",
-                c->req->channel, c->req->id, c->req->qos, c->req->message);
+        DEBUG("REPLICA t=%s i=%d q=%d m=%s", c->req->topic,
+                c->req->id, c->req->qos, c->req->message);
     }
     return 1;
 }
 
 
-static int publish_handler(Client *c) {
+static int publish_handler(SizigyDB *db, Client *c) {
 
     if (c->type == REQUEST) {
-        if (!c->req->channel || c->req->channel_len == 0) {
-            ERROR("Error: missing channel");
+        if (!c->req->topic || c->req->topic_len == 0) {
+            ERROR("Error: missing topic");
         } else {
             add_reply(c, DATA_REPLY, c->req->qos, c->req->retain, c->fd,
-                    strdup((char *) c->req->channel), strdup((char *) c->req->message));
+                    (const uint8_t *) strdup((char *) c->req->topic),
+                    (const uint8_t *) strdup((char *) c->req->message));
         }
     }
     return 1;
 }
 
 
-static int pingreq_handler(Client *c) {
+static int pingreq_handler(SizigyDB *db, Client *c) {
     /* Update last activity timestamp for the client */
     if (c->type == REQUEST) {
+        DEBUG("Received PINGREQ from %s", c->id);
         reply_pingresp(c, c->fd);
-        c->last_action_time = (uint64_t) time(NULL);
+        update_client_last_action(c);
         DEBUG("Sending PINGRESP to %s", c->id);
     }
     return 1;
 }
 
 
-static int subscribe_handler(Client *c) {
+static int subscribe_handler(SizigyDB *db, Client *c) {
 
     if (c->type == REQUEST) {
-        if (!c->req->channel || c->req->channel_len == 0) {
+        if (!c->req->topic || c->req->topic_len == 0) {
 
             reply_suback(c, c->fd, 0x01);
-            DEBUG("Sending SUBACK id=%s rc=1", c->id);
+            DEBUG("Sending SUBACK i=%s r=1", c->id);
 
         } else {
 
-            DEBUG("Received SUBSCRIBE id=%s channel=%s qos=%d", c->id, c->req->channel, c->req->qos);
+            DEBUG("Received SUBSCRIBE i=%s t=%s q=%d",
+                    c->id, c->req->topic, c->req->qos);
 
             reply_suback(c, c->fd, 0x00);
 
-            DEBUG("Sending SUBACK id=%s rc=0", c->id);
+            DEBUG("Sending SUBACK i=%s r=0", c->id);
 
-            void *raw = hashmap_get(global.channels, c->req->channel);
-            if (!raw) {
-                Channel *channel = create_channel((char *) c->req->channel);
-                hashmap_put(global.channels, strdup((char *) c->req->channel), channel);
-            }
-            Channel *chan = (Channel *) hashmap_get(global.channels, c->req->channel);
-
-            struct subscriber *sub = malloc(sizeof(struct subscriber));
-            if (!sub) oom("creating subscriber");
-
-            sub->fd = c->fd;
-            sub->name = c->id;
-            sub->qos = c->req->qos;
-            add_subscriber(chan, sub);
-
-            /* Send retained messages, if any */
-            if (chan->retained) {
-                c->reply->retained = chan->retained;
+            Topic *t;
+            void *raw;
+            if ((raw = hashmap_get(db->topics, c->req->topic))) {
+                t = (Topic *) raw;
             } else {
-                c->reply->retained = NULL;
+                t = create_topic((char *) c->req->topic);
+                hashmap_put(db->topics, strdup((char *) c->req->topic), t);
             }
+
+            Subscription *s = create_subscription(c, t->name, c->req->qos);
+
+            add_subscriber(db, s);
+
+            c->reply->retained = t->retained;
 
             // Update subscriptions for the client
-            list_head_insert(c->subscriptions, chan->name);
+            c->subscriptions = list_head_insert(c->subscriptions, (void *) t->name);
         }
     }
 
@@ -390,30 +395,23 @@ static int subscribe_handler(Client *c) {
 }
 
 
-static int unsubscribe_handler(Client *c) {
+static int unsubscribe_handler(SizigyDB *db, Client *c) {
 
     if (c->type == REQUEST) {
-        if (!c->req->channel || c->req->channel_len == 0) {
-            /* return err_handler(c, ERR_MISS_CHAN); */
+        if (!c->req->topic || c->req->topic_len == 0) {
             reply_suback(c, c->fd, 0x01);
-            DEBUG("Sending SUBACK id=%s rc=1", c->id);
+            DEBUG("Sending SUBACK to %s r=1", c->id);
         } else {
-
-            DEBUG("Received UNSUBSCRIBE id=%s channel=%s", c->id, c->req->channel);
-
+            DEBUG("Received UNSUBSCRIBE from %s t=%s", c->id, c->req->topic);
             reply_suback(c, c->fd, 0x00);
-
-            DEBUG("Sending SUBACK id=%s rc=1", c->id);
-
-            void *raw_chan = hashmap_get(global.channels, c->req->channel);
-
-            if (raw_chan) {
-                Channel *chan = (Channel *) raw_chan;
-
-                // XXX basic placeholder subscriber
-                struct subscriber sub = { c->fd, AT_MOST_ONCE, c->id };
-                del_subscriber(chan, &sub);
-            }
+            DEBUG("Sending SUBACK to %s r=1", c->id);
+            Subscription s = {
+                .client = c,
+                .topic = c->req->topic,
+                .qos = 0  // No matter value to remove it
+            };
+            // XXX basic placeholder subscriber
+            del_subscriber(db, &s);
         }
     }
     // TODO remove subscriptions from client
@@ -442,13 +440,13 @@ static int commands_hashmap_len(void) {
 
 static void free_reply(Reply *reply) {
     if (reply->data)
-        free(reply->data);
-    if (reply->channel)
-        free(reply->channel);
+        free((uint8_t *) reply->data);
+    if (reply->topic)
+        free((uint8_t *) reply->topic);
 }
 
 /* Handle incoming requests, after being accepted or after a reply */
-static int request_handler(const int epollfd, Client *client) {
+static int request_handler(SizigyDB *db, Client *client) {
 
     const int clientfd = client->fd;
 
@@ -477,7 +475,7 @@ static int request_handler(const int epollfd, Client *client) {
 
     if (!b) {
         client->ctx_handler = request_handler;
-        mod_epoll(epollfd, clientfd, EPOLLIN, client);
+        mod_epoll(db->epollfd, clientfd, EPOLLIN, client);
         ringbuf_free(rbuf);
         return 0;
     }
@@ -486,6 +484,8 @@ static int request_handler(const int epollfd, Client *client) {
         read_all = unpack_request(b, &req);
     else if (type == RESPONSE)
         read_all = unpack_response(b, &res);
+    else
+        read_all = 1;
 
     buffer_destroy(b);
 
@@ -498,7 +498,7 @@ static int request_handler(const int epollfd, Client *client) {
 
     uint8_t opcode;
     client->type = type;
-    client->last_action_time = (uint64_t) time(NULL);
+    update_client_last_action(client);
 
     /* Link the correct structure to the client, according to the packet type
        received */
@@ -520,7 +520,7 @@ static int request_handler(const int epollfd, Client *client) {
     // Loop through commands_hashmap array to find the correct handler
     for (int i = 0; i < commands_hashmap_len(); i++) {
         if (commands_hashmap[i].ctype == opcode) {
-            free_reply = commands_hashmap[i].handler(client);
+            free_reply = commands_hashmap[i].handler(db, client);
             executed = 1;
         }
     }
@@ -535,10 +535,10 @@ static int request_handler(const int epollfd, Client *client) {
 
     // Set up epoll events
     if (opcode != PUBREC || executed == 0) {
-        mod_epoll(epollfd, clientfd, EPOLLOUT, client);
+        mod_epoll(db->epollfd, clientfd, EPOLLOUT, client);
     } else {
         client->ctx_handler = request_handler;
-        mod_epoll(epollfd, clientfd, EPOLLIN, client);
+        mod_epoll(db->epollfd, clientfd, EPOLLIN, client);
         if (executed != 0 && free_reply > -1 && client->reply) {
             free(client->reply);
             client->reply = NULL;
@@ -560,10 +560,10 @@ static int request_handler(const int epollfd, Client *client) {
         case PUBLISH:
         case SUBSCRIBE:
             if (type == REQUEST) {
-                free(req.channel);
+                free(req.topic);
                 free(req.message);
             } else {
-                free(res.channel);
+                free(res.topic);
                 free(res.message);
             }
             break;
@@ -607,7 +607,7 @@ static Buffer *craft_response(Reply *r, Response *ack, uint8_t rc) {
 
 /* Handle reply state, after a request/response has been processed in
    request_handler routine */
-static int reply_handler(const int epollfd, Client *client) {
+static int reply_handler(SizigyDB *db, Client *client) {
 
     int ret = 0;
     if (!client->reply) return ret;
@@ -620,12 +620,15 @@ static int reply_handler(const int epollfd, Client *client) {
     Buffer *p_ack = NULL;
 
     if (reply->type >= CONNACK_REPLY && reply->type <= PINGRESP_REPLY) {
+
         Response *ack = build_ack_res(CONNACK, 0x00);
         p_ack = craft_response(reply, ack, 0x00);
+
         if ((sendall(reply->fd, p_ack->data, p_ack->size, &sent)) < 0) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
         }
+
         free(ack->header);
         free(ack);
         buffer_destroy(p_ack);
@@ -633,8 +636,9 @@ static int reply_handler(const int epollfd, Client *client) {
         /* In case of reply->retained we assume that the rc == 0 */
         if (reply->type == SUBACK_REPLY && reply->retained) {
             Message *m = reply->retained;
-            char *channel = append_string(m->channel, " ");
-            Response *r = build_pub_res(m->qos, channel, m->payload, 0);
+            char *topic = append_string((const char *) m->topic, " ");
+            Response *r =
+                build_pub_res(m->qos, (const uint8_t *) topic, m->payload, 0);
 
             r->id = m->id;
 
@@ -643,7 +647,7 @@ static int reply_handler(const int epollfd, Client *client) {
                 perror("send(2): error sending\n");
             }
 
-            free(channel);
+            free(topic);
             buffer_destroy(p);
             free(r);
         }
@@ -653,11 +657,11 @@ static int reply_handler(const int epollfd, Client *client) {
         /* Dirty hack: we should now send host:port pairs in order to update
            all the cluster with the new member, excluding the self and himself */
         /* So first we retrive the id of the newly joined member */
-        char *new_member_id = reply->data;
-        char *new_member_port = reply->channel;
+        const char *new_member_id = (const char *) reply->data;
+        const char *new_member_port = (const char *) reply->topic;
 
         /* Next we must populate the string with the host:port pairs */
-        list_node *cur = global.peers->head;
+        list_node *cur = db->peers->head;
 
         while (cur) {
 
@@ -670,7 +674,8 @@ static int reply_handler(const int epollfd, Client *client) {
                 char *pair = append_string(hostcolon, new_member_port);
 
                 /* Pack request and send it to other peers so they can connect to the new member */
-                Request *join_ack = build_ack_req(CLUSTER_JOIN_ACK, pair);
+                Request *join_ack =
+                    build_ack_req(CLUSTER_JOIN_ACK, (const uint8_t *) pair);
                 p_ack = pack_request(join_ack);
 
                 if ((sendall(cli->fd, p_ack->data, p_ack->size, &sent)) < 0) {
@@ -697,19 +702,25 @@ static int reply_handler(const int epollfd, Client *client) {
 
     } else {
 
-        void *raw_subs = hashmap_get(global.channels, reply->channel);
-        /* If not channel is found, we create it and store in the global hashmap */
-        if (!raw_subs) {
-            Channel *channel = create_channel(reply->channel);
-            hashmap_put(global.channels, strdup(reply->channel), channel);
+        Topic *t;
+        void *raw;
+        if ((raw = hashmap_get(db->topics, (void *) reply->topic))) {
+            t = (Topic *) raw;
+        } else {
+            t = create_topic((char *) reply->topic);
+            hashmap_put(db->topics, strdup((const char *) reply->topic), t);
         }
-        /* Retrieve the channel to publish data to by name */
-        Channel *chan = (Channel *) hashmap_get(global.channels, reply->channel);
 
         double tic = clock();
-        sent = publish_message(chan, reply->qos, reply->retain, strdup(reply->data), 0);
+        /* sent = publish_message(t, reply->qos, reply->retain, */
+        /*         (const uint8_t *) strdup((char *) reply->data), 0, (const uint8_t *) client->id); */
+        Message *m = create_message(reply->qos, reply->retain, 0,
+                (const uint8_t *) strdup(t->name), reply->data, (const uint8_t *) client->id);
+        sent = publish_message2(t, m, 0);
         double elapsed = (clock() - tic) / CLOCKS_PER_SEC;
         int load = (sent / elapsed);
+
+        if (sent > -1) update_client_last_action(client);
 
         // Check for QOS level
         if (reply->qos == 1) {
@@ -735,13 +746,13 @@ static int reply_handler(const int epollfd, Client *client) {
 
     /* Set up EPOLL event for read fds */
     client->ctx_handler = request_handler;
-    mod_epoll(epollfd, client->fd, EPOLLIN, client);
+    mod_epoll(db->epollfd, client->fd, EPOLLIN, client);
     return ret;
 }
 
 /* Handle new connection, create a a fresh new Client structure and link it
    to the fd, ready to be set in EPOLLIN event */
-static int accept_handler(const int epollfd, Client *server) {
+static int accept_handler(SizigyDB *db, Client *server) {
     const int fd = server->fd;
 
     /* Accept the connection */
@@ -778,8 +789,10 @@ static int accept_handler(const int epollfd, Client *server) {
     client->addr = strdup(ip_buff);
     client->fd = clientsock;
     client->keepalive = global.keepalive,  // FIXME: Placeholder
-    client->last_action_time = (uint64_t) time(NULL);
+    client->last_action_time = init_atomic();
     client->ctx_handler = request_handler;
+
+    write_atomic(client->last_action_time, (const uint64_t ) time(NULL));
 
     const char *id = random_name(16);
     char *name = append_string("C:", id);  // C states that it is a client (could be another sizigy instance)
@@ -791,17 +804,17 @@ static int accept_handler(const int epollfd, Client *server) {
 
     /* If the socket is listening in the bus port, add the connection to the peers */
     if (sin.sin_port == global.bus_port) {
-        global.peers = list_head_insert(global.peers, client);
+        db->peers = list_head_insert(db->peers, client);
     }
 
     /* Add new accepted server to the global hashmap */
-    hashmap_put(global.clients, name, client);
+    add_client(db, client);
 
     /* Add it to the epoll loop */
-    add_epoll(epollfd, clientsock, client);
+    add_epoll(db->epollfd, clientsock, client);
 
     /* Rearm server fd to accept new connections */
-    mod_epoll(epollfd, fd, EPOLLIN, server);
+    mod_epoll(db->epollfd, fd, EPOLLIN, server);
 
     return 0;
 }
@@ -814,7 +827,8 @@ static int check_client_status(void *t1, void *t2) {
         // free value field
         if (kv->val) {
             Client *c = (Client *) kv->val;
-            if (c->status == ONLINE && (now - c->last_action_time) >= c->keepalive) {
+            const uint64_t last_action = read_atomic(c->last_action_time);
+            if (c->status == ONLINE && (now - last_action) >= c->keepalive) {
                 DEBUG("Disconnecting client %s", c->id);
                 // TODO: Remove fd from epoll with an mod_epoll EPOLL_CTL_DEL
                 // call
@@ -825,16 +839,20 @@ static int check_client_status(void *t1, void *t2) {
         }
         return HASHMAP_OK;
     }
-
     return HASHMAP_ERR;
 }
 
 
 static void *keepalive(void *args) {
+    SizigyDB *db = (SizigyDB *) args;
     /* Iterate through all clients in the global hashmap every second in order to
        check last activity timestamp */
+    eventfd_t val;
     while (1) {
-        hashmap_iterate2(global.clients, check_client_status, NULL);
+        eventfd_read(global.run, &val);
+        if (val == 1)
+            break;
+        hashmap_iterate2(db->clients, check_client_status, NULL);
         sleep(1);
     }
     return NULL;
@@ -843,7 +861,10 @@ static void *keepalive(void *args) {
 /* Main worker function, his responsibility is to wait on events on a shared
    EPOLL fd, use the same way for clients or peer to distribute messages */
 static void *worker(void *args) {
-    struct socks *fds = (struct socks *) args;
+
+    SizigyDB *db = (SizigyDB *) args;
+
+    /* struct socks *fds = (struct socks *) args; */
     struct epoll_event *evs = malloc(sizeof(*evs) * MAX_EVENTS);
 
     if (!evs) {
@@ -852,7 +873,7 @@ static void *worker(void *args) {
     }
 
     int events_cnt;
-    while ((events_cnt = epoll_wait(fds->epollfd, evs, MAX_EVENTS, -1)) > 0) {
+    while ((events_cnt = epoll_wait(db->epollfd, evs, MAX_EVENTS, -1)) > 0) {
         for (int i = 0; i < events_cnt; i++) {
 
             /* Check for errors first */
@@ -863,7 +884,7 @@ static void *worker(void *args) {
                 /* An error has occured on this fd, or the socket is not
                    ready for reading */
                 perror ("epoll_wait(2)");
-                hashmap_iterate2(global.channels, close_socket, NULL);
+                hashmap_iterate2(db->topics, close_socket, NULL);
 
                 close(evs[i].data.fd);
                 continue;
@@ -873,12 +894,13 @@ static void *worker(void *args) {
                 eventfd_t val;
                 eventfd_read(global.run, &val);
 
-                DEBUG("Stopping epoll loop. Thread %p exiting.", (void *) pthread_self());
+                DEBUG("Stopping epoll loop. Thread %p exiting.",
+                        (void *) pthread_self());
 
                 goto exit;
             } else {
                 /* Finally handle the request according to its type */
-                ((Client *) evs[i].data.ptr)->ctx_handler(fds->epollfd, evs[i].data.ptr);
+                ((Client *) evs[i].data.ptr)->ctx_handler(db, evs[i].data.ptr);
             }
         }
     }
@@ -898,13 +920,11 @@ static int destroy_queue_data(void *t1, void *t2) {
     if (kv) {
         // free value field
         if (kv->val) {
-            Channel *c = (Channel *) kv->val;
-            QueueItem *item = c->messages->front;
+            Topic *t = (Topic *) kv->val;
+            QueueItem *item = t->messages->front;
             while (item) {
                 Message *m = (Message *) item->data;
-                if (m->payload)
-                    free(m->payload);
-                free(m);
+                destroy_message(m);
                 item = item->next;
             }
         }
@@ -913,13 +933,13 @@ static int destroy_queue_data(void *t1, void *t2) {
 }
 
 
-static int destroy_channels(void *t1, void *t2) {
+static int destroy_topics(void *t1, void *t2) {
     hashmap_entry *kv = (hashmap_entry *) t2;
     if (kv) {
         // free value field
         if (kv->val) {
-            Channel *c = (Channel *) kv->val;
-            destroy_channel(c);
+            Topic *t = (Topic *) kv->val;
+            destroy_topic(t);
         }
     } else return HASHMAP_ERR;
     return HASHMAP_OK;
@@ -937,6 +957,7 @@ static int destroy_clients(void *t1, void *t2) {
                 free(c->reply);
             if (c->subscriptions)
                 list_release(c->subscriptions, 0);
+            free(c->last_action_time);
         }
     } else return HASHMAP_ERR;
     return HASHMAP_OK;
@@ -952,7 +973,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     /* Initialize global server object */
     global.loglevel = DEBUG;
     global.run = eventfd(0, EFD_NONBLOCK);
-    global.channels = hashmap_create();
+    global.topics = hashmap_create();
     global.ack_waiting = hashmap_create();
     global.clients = hashmap_create();
     global.peers = list_create();
@@ -961,6 +982,17 @@ int start_server(const char *addr, char *port, int node_fd) {
     global.throttler = init_throttler();
     pthread_mutex_init(&(global.lock), NULL);
     global.keepalive = 60;
+
+    SizigyDB sizigydb;
+    /* Initialize SizigyDB server object */
+    sizigydb.run = eventfd(0, EFD_NONBLOCK);
+    sizigydb.topics = hashmap_create();
+    sizigydb.ack_waiting = hashmap_create();
+    sizigydb.clients = hashmap_create();
+    sizigydb.peers = list_create();
+    sizigydb.next_id = init_atomic();  // counter to get message id, should be enclosed inside locks
+    pthread_mutex_init(&(global.lock), NULL);
+
 
     /* Initialize epollfd for server component */
     const int epollfd = epoll_create1(0);
@@ -988,6 +1020,7 @@ int start_server(const char *addr, char *port, int node_fd) {
 
     /* Add the bus port to the global shared structure */
     global.bus_port = bport;
+    sizigydb.bus_port = bport;
 
     /* The bus one for distribution */
     const int bfd = make_listen(addr, bus_port);
@@ -1012,7 +1045,7 @@ int start_server(const char *addr, char *port, int node_fd) {
         .addr = addr,
         .keepalive = global.keepalive,  // FIXME: Placeholder
         .fd = fd,
-        .last_action_time = (uint64_t) time(NULL),
+        .last_action_time = init_atomic(),
         .ctx_handler = accept_handler,
         .id = "server",
         .reply = NULL,
@@ -1027,7 +1060,7 @@ int start_server(const char *addr, char *port, int node_fd) {
         .addr = addr,
         .keepalive = global.keepalive,  // FIXME: Placeholder
         .fd = bfd,
-        .last_action_time = (uint64_t) time(NULL),
+        .last_action_time = init_atomic(),
         .ctx_handler = accept_handler,
         .id = "bus",
         .reply = NULL,
@@ -1042,11 +1075,13 @@ int start_server(const char *addr, char *port, int node_fd) {
     add_epoll(bepollfd, bfd, &bus);
 
     global.bepollfd = bepollfd;
+    sizigydb.bepollfd = bepollfd;
+    sizigydb.epollfd = epollfd;
 
     /* Bus dedicated thread */
     pthread_t bus_worker;
-    struct socks bus_fds = { bepollfd, bfd };
-    pthread_create(&bus_worker, NULL, worker, (void *) &bus_fds);
+    /* struct socks bus_fds = { bepollfd, bfd }; */
+    pthread_create(&bus_worker, NULL, worker, (void *) &sizigydb);
 
     /* Worker thread pool */
     pthread_t workers[EPOLL_WORKERS];
@@ -1054,12 +1089,12 @@ int start_server(const char *addr, char *port, int node_fd) {
     /* I/0 thread pool initialization, passing a the pair {epollfd, fd} sockets
        for each one. Every worker handle input from clients, accepting
        connections and sending out data when a socket is ready to write */
-    struct socks fds = { epollfd, fd };
+    /* struct socks fds = { epollfd, fd }; */
 
     for (int i = 0; i < EPOLL_WORKERS; ++i)
-        pthread_create(&workers[i], NULL, worker, (void *) &fds);
+        pthread_create(&workers[i], NULL, worker, (void *) &sizigydb);
 
-    INFO("Sizigy v0.5.1");
+    INFO("Sizigy v0.5.5");
     INFO("Starting server on %s:%s", addr, port);
 
     Client node = {
@@ -1069,7 +1104,7 @@ int start_server(const char *addr, char *port, int node_fd) {
         .addr = addr,
         .fd = node_fd,
         .ctx_handler = request_handler,
-        .last_action_time = (uint64_t) time(NULL),
+        .last_action_time = init_atomic(),
         .id = "node",
         .reply = NULL,
         .subscriptions = list_create(),
@@ -1080,7 +1115,8 @@ int start_server(const char *addr, char *port, int node_fd) {
     if (node_fd > 0) {
         add_epoll(bepollfd, node_fd, &node);
         /* Ask for joining the cluster */
-        Request *join_req_packet = build_ack_req(CLUSTER_JOIN, bus_port);
+        Request *join_req_packet =
+            build_ack_req(CLUSTER_JOIN, (uint8_t *) bus_port);
         Buffer *p = pack_request(join_req_packet);
         int rc = sendall(node_fd, p->data, p->size, &(ssize_t) { 0 });
         if (rc < 0)
@@ -1091,10 +1127,10 @@ int start_server(const char *addr, char *port, int node_fd) {
 
     pthread_t keepalive_thread;
 
-    pthread_create(&keepalive_thread, NULL, keepalive, NULL);
+    pthread_create(&keepalive_thread, NULL, keepalive, &sizigydb);
 
     /* Use main thread as a worker too */
-    worker(&fds);
+    worker(&sizigydb);
 
     for (int i = 0; i < EPOLL_WORKERS; ++i)
         pthread_join(workers[i], NULL);
@@ -1104,17 +1140,223 @@ int start_server(const char *addr, char *port, int node_fd) {
 
 cleanup:
     /* Free all resources allocated */
-    hashmap_iterate2(global.channels, destroy_queue_data, NULL);
-    hashmap_iterate2(global.channels, destroy_channels, NULL);
+    hashmap_iterate2(global.topics, destroy_queue_data, NULL);
+    hashmap_iterate2(global.topics, destroy_topics, NULL);
     hashmap_iterate2(global.clients, destroy_clients, NULL);
+    hashmap_iterate2(sizigydb.topics, destroy_queue_data, NULL);
+    hashmap_iterate2(sizigydb.topics, destroy_topics, NULL);
+    hashmap_iterate2(sizigydb.clients, destroy_clients, NULL);
     free(server.subscriptions);
     free(bus.subscriptions);
     free(node.subscriptions);
     list_release(global.peers, 1);
+    list_release(sizigydb.peers, 1);
     free(global.next_id);
     free(global.throughput);
     free(global.throttler);
     pthread_mutex_destroy(&(global.lock));
+    pthread_mutex_destroy(&(sizigydb.lock));
     DEBUG("Bye\n");
     return 0;
 }
+
+
+void retain_message(Topic *t, const uint64_t id,
+        uint8_t qos, uint8_t dup, const uint8_t *payload) {
+
+    Message *m = malloc(sizeof(Message));
+    if (!m) oom("creating message to be stored");
+
+    m->creation_time = time(NULL);
+    m->id = id;
+    m->qos = qos;
+    m->dup = dup;
+    m->payload = (uint8_t *) strdup((const char *) payload);
+    m->topic = (uint8_t *) t->name;
+    m->retained = 1;
+    t->retained = m;
+
+}
+
+
+void retain_message2(Topic *t, Message *m) {
+    m->retained = 1;
+    t->retained = m;
+}
+
+
+
+
+void store_message(Topic *t, const uint64_t id,
+        uint8_t qos, uint8_t dup, const uint8_t *payload, int check_peers) {
+
+    Message *m = malloc(sizeof(Message));
+    if (!m) oom("creating message to be stored");
+
+    m->creation_time = (uint64_t) time(NULL);
+    m->id = id;
+    m->qos = qos;
+    m->dup = dup;
+    m->payload = (uint8_t *) strdup((const char *) payload);
+    m->topic = (uint8_t *) t->name;
+    enqueue(t->messages, m);
+
+    // Check if cluster has members and spread the replicas
+    if (check_peers == 1 && global.peers->len > 0) {
+        const char *m = append_string(t->name, " "); // TODO: check
+        Request *replica_r = build_rep_req(qos, (const uint8_t *) m, payload);
+        Buffer *p = pack_request(replica_r);
+        list_node *cur = global.peers->head;
+
+        while (cur) {
+            Client *c = (Client *) cur->data;
+            sendall(c->fd, p->data, p->size, &(ssize_t) { 0 });
+            cur = cur->next;
+        }
+
+        free((char *) m);
+        free(replica_r->header);
+        free(replica_r);
+        buffer_destroy(p);
+    }
+}
+
+
+int publish_message(Topic *t, uint8_t qos, uint8_t retain,
+        const uint8_t *message, int incr, const uint8_t *sender) {
+    int total_bytes_sent = 0;
+    uint8_t qos_mod = 0;
+    int increment = incr < 0 ? 0 : 1;
+    const char *topic = append_string(t->name, " ");
+    uint8_t duplicate = 0;
+    Response *response =
+        build_pub_res(qos, (const uint8_t *) topic, message, increment);
+    uint64_t id = response->id;
+    Buffer *p = pack_response(response);
+    int send_rc = 0;
+
+    /* Prepare packet for AT_LEAST_ONCE subscribers */
+    if (response->qos == AT_MOST_ONCE) {
+        response->qos = AT_LEAST_ONCE;
+        qos_mod = 1;
+    }
+
+    Buffer *p_ack = pack_response(response);
+
+    /* Restore original qos */
+    if (qos_mod)
+        response->qos = AT_MOST_ONCE;
+
+    DEBUG("[%p] Received PUBLISH from %s s=%ld c=%s i=%ld q=%d r=%d d=%d p=%s",
+            (void *) pthread_self(), sender, p->size, t->name, id, qos, retain, duplicate, (char *) message);
+
+    /* Add message to the Queue associated to the topic */
+    /* store_message(chan, response->id, response->qos, response->sent_count, message, 1); */
+    if (retain == 1)
+        retain_message(t, response->id, response->qos, response->sent_count, message);
+
+    /* Sent bytes sentinel */
+    ssize_t sent = 0;
+
+    /* Iterate through all the subscribers to send them the message */
+    list_node *cursor = t->subscribers->head;
+    while (cursor) {
+        Subscription *sub = (Subscription *) cursor->data;
+        /* Check if subscriber has a qos != qos param */
+        if (sub->qos > qos) {
+            send_rc = sendall(sub->client->fd, p_ack->data, p_ack->size, &sent);
+            if (send_rc < 0)
+                perror("Can't publish");
+        } else {
+            send_rc = sendall(sub->client->fd, p->data, p->size, &sent);
+            if (send_rc < 0)
+                perror("Can't publish");
+        }
+        update_client_last_action(sub->client);
+        total_bytes_sent += sent;
+        DEBUG("[%p] Sending PUBLISH to %s p=%s", (void *) pthread_self(), sub->client->id, message);
+        cursor = cursor->next;
+    }
+
+    buffer_destroy(p);
+    buffer_destroy(p_ack);
+    free(response->header);
+    free(response);
+    free((uint8_t *) message);
+    free((uint8_t *) topic);
+
+    if (send_rc < 0) return -1;
+
+    return total_bytes_sent;
+}
+
+
+int publish_message2(Topic *t, Message *m, int incr) {
+    int total_bytes_sent = 0;
+    uint8_t qos_mod = 0;
+    int increment = incr < 0 ? 0 : 1;
+    const char *topic = append_string(t->name, " ");
+    uint8_t duplicate = 0;
+    Response *response =
+        build_pub_res(m->qos, m->topic, m->payload, increment);
+    uint64_t id = response->id;
+    Buffer *p = pack_response(response);
+    int send_rc = 0;
+
+    /* Prepare packet for AT_LEAST_ONCE subscribers */
+    if (response->qos == AT_MOST_ONCE) {
+        response->qos = AT_LEAST_ONCE;
+        qos_mod = 1;
+    }
+
+    Buffer *p_ack = pack_response(response);
+
+    /* Restore original qos */
+    if (qos_mod)
+        response->qos = AT_MOST_ONCE;
+
+    DEBUG("Received PUBLISH from %s s=%ld c=%s i=%ld q=%d r=%d d=%d",
+            m->sender, p->size, t->name, id, m->qos, m->retained, duplicate);
+
+    /* Add message to the Queue associated to the topic */
+    /* store_message(chan, response->id, response->qos, response->sent_count, message, 1); */
+    if (m->retained == 1)
+        retain_message2(t, m);
+
+    /* Sent bytes sentinel */
+    ssize_t sent = 0;
+
+    /* Iterate through all the subscribers to send them the message */
+    list_node *cursor = t->subscribers->head;
+    while (cursor) {
+        Subscription *sub = (Subscription *) cursor->data;
+        /* Check if subscriber has a qos != qos param */
+        if (sub->qos > m->qos) {
+            send_rc = sendall(sub->client->fd, p_ack->data, p_ack->size, &sent);
+            if (send_rc < 0)
+                perror("Can't publish");
+        } else {
+            send_rc = sendall(sub->client->fd, p->data, p->size, &sent);
+            if (send_rc < 0)
+                perror("Can't publish");
+        }
+        update_client_last_action(sub->client);
+        total_bytes_sent += sent;
+        DEBUG("Sending PUBLISH from %s s=%ld c=%s i=%ld q=%d r=%d d=%d",
+                m->sender, p->size, t->name, id, m->qos, m->retained, duplicate);
+
+        cursor = cursor->next;
+    }
+
+    buffer_destroy(p);
+    buffer_destroy(p_ack);
+    free(response->header);
+    free(response);
+    free((uint8_t *) topic);
+
+    if (send_rc < 0) return -1;
+
+    return total_bytes_sent;
+}
+
+

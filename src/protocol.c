@@ -66,15 +66,15 @@ static void pack_connect_packet(Buffer *b,
 
 
 static void pack_subscribe_packet(Buffer *b, uint8_t qos,
-        uint8_t retain, uint8_t *channel, uint8_t *message) {
+        uint8_t retain, uint8_t *topic, uint8_t *message) {
 
     assert(b);
 
-    write_uint16(b, strlen((char *) channel));
+    write_uint16(b, strlen((char *) topic));
     write_uint32(b, strlen((char *) message));
     write_uint8(b, retain);
     write_uint8(b, qos);
-    write_string(b, channel);
+    write_string(b, topic);
     write_string(b, message);
 }
 
@@ -110,11 +110,11 @@ Buffer *pack_request(Request *request) {
         case SUBSCRIBE:
             tlen = HEADERLEN + sizeof(uint16_t) +
                 (2 * sizeof(uint8_t)) + sizeof(uint32_t) +
-                request->channel_len + request->message_len;
+                request->topic_len + request->message_len;
             b = buffer_init(tlen);
             pack_header(request->header, b);
             pack_subscribe_packet(b, request->qos,
-                    request->retain, request->channel, request->message);
+                    request->retain, request->topic, request->message);
             break;
         case QUIT:
         case PINGREQ:
@@ -163,11 +163,11 @@ int8_t unpack_request(Buffer *b, Request *r) {
         case REPLICA:
         case PUBLISH:
         case SUBSCRIBE:
-            r->channel_len = read_uint16(b);
+            r->topic_len = read_uint16(b);
             r->message_len = read_uint32(b);
             r->qos = read_uint8(b);
             r->retain = read_uint8(b);
-            r->channel = read_string(b, r->channel_len);
+            r->topic = read_string(b, r->topic_len);
             r->message = read_string(b, r->message_len);
             break;
         case CLUSTER_JOIN:
@@ -195,17 +195,17 @@ Buffer *pack_response(Response *response) {
     switch (response->header->opcode) {
         case REPLICA:
         case PUBLISH:
-            tlen = HEADERLEN + sizeof(uint32_t) + response->channel_len +
+            tlen = HEADERLEN + sizeof(uint32_t) + response->topic_len +
                 response->message_len + sizeof(uint16_t) +
                 (2 * sizeof(uint8_t)) + sizeof(uint64_t);
             b = buffer_init(tlen);
             pack_header(response->header, b);
-            write_uint16(b, response->channel_len);
+            write_uint16(b, response->topic_len);
             write_uint32(b, response->message_len);
             write_uint8(b, response->qos);
             write_uint8(b, response->sent_count);
             write_uint64(b, response->id);
-            write_string(b, response->channel);
+            write_string(b, response->topic);
             write_string(b, response->message);
             break;
         case CONNACK:
@@ -241,12 +241,12 @@ int8_t unpack_response(Buffer *b, Response *r) {
 
     switch (r->header->opcode) {
         case PUBLISH:
-            r->channel_len = read_uint16(b);
+            r->topic_len = read_uint16(b);
             r->message_len = read_uint32(b);
             r->qos = read_uint8(b);
             r->sent_count = read_uint8(b);
             r->id = read_uint64(b);
-            r->channel = read_string(b, r->channel_len);
+            r->topic = read_string(b, r->topic_len);
             r->message = read_string(b, r->message_len);
             break;
         case SUBACK:
@@ -261,8 +261,8 @@ int8_t unpack_response(Buffer *b, Response *r) {
 }
 
 
-Request *build_ack_request(uint8_t type,
-        uint8_t opcode, uint64_t id, char *data) {
+Request *build_ack_request(const uint8_t type,
+        const uint8_t opcode, const uint64_t id, const uint8_t *data) {
 
     Request *r = malloc(sizeof(Request));
     if (!r) oom("building ack request");
@@ -272,7 +272,7 @@ Request *build_ack_request(uint8_t type,
 
     r->header->type = type;
     r->header->opcode = opcode;
-    r->header->data_len = r->ack_len = strlen(data);
+    r->header->data_len = r->ack_len = strlen((char *) data);
     r->id = id;
     r->ack_data = (uint8_t *) data;
 
@@ -280,8 +280,8 @@ Request *build_ack_request(uint8_t type,
 }
 
 
-Request *build_connect_request(uint8_t type,
-        uint8_t opcode, uint8_t clean_session, char *sub_id) {
+Request *build_connect_request(const uint8_t type,
+        const uint8_t opcode, const uint8_t clean_session, const uint8_t *sub_id) {
 
     Request *r = malloc(sizeof(Request));
     if (!r) oom("building connect request");
@@ -292,7 +292,7 @@ Request *build_connect_request(uint8_t type,
     r->header->type = type;
     r->header->opcode = opcode;
     r->clean_session = clean_session;
-    r->header->data_len = r->sub_id_len = strlen(sub_id);
+    r->header->data_len = r->sub_id_len = strlen((char *) sub_id);
     r->sub_id = (uint8_t *) sub_id;
     r->keepalive = 60;  // FIXME: Placeholder
 
@@ -300,7 +300,7 @@ Request *build_connect_request(uint8_t type,
 }
 
 
-Request *build_unsubscribe_request(uint8_t type, uint8_t opcode, char *data) {
+Request *build_unsubscribe_request(const uint8_t type, const uint8_t opcode, const uint8_t *data) {
 
     Request *r = malloc(sizeof(Request));
     if (!r) oom("building unsubscribe request");
@@ -310,15 +310,15 @@ Request *build_unsubscribe_request(uint8_t type, uint8_t opcode, char *data) {
 
     r->header->type = type;
     r->header->opcode = opcode;
-    r->header->data_len = strlen(data);
+    r->header->data_len = strlen((char *) data);
     r->data = (uint8_t *) data;
 
     return r;
 }
 
 
-Request *build_subscribe_request(uint8_t type, uint8_t opcode,
-        uint8_t qos, char *channel_name, char *message) {
+Request *build_subscribe_request(const uint8_t type, const uint8_t opcode,
+        const uint8_t qos, const uint8_t *topic_name, const uint8_t *message) {
 
     Request *r = malloc(sizeof(Request));
     if (!r) oom("building subscribe request");
@@ -326,25 +326,25 @@ Request *build_subscribe_request(uint8_t type, uint8_t opcode,
     r->header = malloc(sizeof(Header));
     if (!r->header) oom("building header of subscribe request");
 
-    uint16_t clen = strlen(channel_name);
-    uint32_t mlen = strlen(message);
+    uint16_t clen = strlen((char *) topic_name);
+    uint32_t mlen = strlen((char *) message);
 
     r->header->type = type;
     r->header->opcode = opcode;
     r->header->data_len = clen + mlen;
     r->qos = qos;
     r->retain = 0;
-    r->channel_len = clen;
+    r->topic_len = clen;
     r->message_len = mlen;
-    r->channel = (uint8_t *) channel_name;
+    r->topic = (uint8_t *) topic_name;
     r->message = (uint8_t *) message;
 
     return r;
 }
 
 
-Response *build_publish_response(uint8_t type, uint8_t opcode,
-        uint8_t qos, char *channel_name, char *message, uint8_t incr) {
+Response *build_publish_response(const uint8_t type, const uint8_t opcode,
+        const uint8_t qos, const uint8_t *topic_name, const uint8_t *message, const uint8_t incr) {
 
     uint64_t id = read_atomic(global.next_id);
     if (incr == 1) {
@@ -357,8 +357,8 @@ Response *build_publish_response(uint8_t type, uint8_t opcode,
     r->header = malloc(sizeof(Header));
     if (!r->header) oom("building header of publish request");
 
-    uint16_t clen = strlen(channel_name);
-    uint32_t mlen = strlen(message);
+    uint16_t clen = strlen((char *) topic_name);
+    uint32_t mlen = strlen((char *) message);
 
     r->header->type = type;
     r->header->opcode = opcode;
@@ -366,16 +366,16 @@ Response *build_publish_response(uint8_t type, uint8_t opcode,
     r->qos = qos;
     r->id = id;
     r->sent_count = 0;
-    r->channel_len = clen;
+    r->topic_len = clen;
     r->message_len = mlen;
-    r->channel = (uint8_t *) channel_name;
+    r->topic = (uint8_t *) topic_name;
     r->message = (uint8_t *) message;
 
     return r;
 }
 
 
-Response *build_ack_response(uint8_t type, uint8_t opcode, uint8_t rc) {
+Response *build_ack_response(const uint8_t type, const uint8_t opcode, const uint8_t rc) {
 
     Response *r = malloc(sizeof(Response));
     if (!r) oom("building ack request");
@@ -393,7 +393,7 @@ Response *build_ack_response(uint8_t type, uint8_t opcode, uint8_t rc) {
 
 
 /* Init Buffer data structure, to ease byte arrays handling */
-Buffer *buffer_init(size_t len) {
+Buffer *buffer_init(const size_t len) {
     Buffer *b = malloc(sizeof(Buffer));
     b->data = malloc(len);
     if (!b || !b->data) oom("allocating memory for new buffer");

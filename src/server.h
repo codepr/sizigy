@@ -32,11 +32,12 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <pthread.h>
-#include "hashmap.h"
 #include "util.h"
 #include "list.h"
+#include "sizigy.h"
+#include "hashmap.h"
 #include "ringbuf.h"
-#include "channel.h"
+// #include "topic.h"
 #include "protocol.h"
 
 
@@ -50,7 +51,7 @@
 
 #define OK          "OK\n"
 #define E_UNKNOWN   "ERR: Unknown command\n"
-#define E_MISS_CHAN "ERR: Missing channel name\n"
+#define E_MISS_CHAN "ERR: Missing topic name\n"
 #define E_MISS_MEX  "ERR: Missing message to publish\n"
 #define E_MISS_ID   "ERR: Missing ID and clean session set to True\n"
 
@@ -74,22 +75,22 @@ typedef struct client Client;
 
 typedef struct reply Reply;
 
-struct client {
-    uint8_t type;
-    uint8_t status;
-    uint16_t keepalive;
-    uint64_t last_action_time;
-    const char *addr;
-    int fd;
-    int (*ctx_handler)(int, Client *);
-    char *id;
-    Reply *reply;
-    List *subscriptions;
-    union {
-        Request *req;
-        Response *res;
-    };
-};
+// struct client {
+//     uint8_t type;
+//     uint8_t status;
+//     uint16_t keepalive;
+//     uint64_t last_action_time;
+//     const char *addr;
+//     int fd;
+//     int (*ctx_handler)(SizigyDB *, Client *);
+//     char *id;
+//     Reply *reply;
+//     List *subscriptions;
+//     union {
+//         Request *req;
+//         Response *res;
+//     };
+// };
 
 
 struct socks {
@@ -106,8 +107,8 @@ struct reply {
         struct {
             uint8_t qos;
             uint8_t retain;
-            char *data;
-            char *channel;
+            const uint8_t *data;
+            const uint8_t *topic;
         };
         /* Suback reply */
         Message *retained;
@@ -119,7 +120,7 @@ struct reply {
 
 struct command {
     const int ctype;
-    int (*handler)(Client *);
+    int (*handler)(SizigyDB *, Client *);
 };
 
 
@@ -134,8 +135,8 @@ struct global {
     int bepollfd;
     /* Atomic auto-increment unsigned long long int to get the next message ID */
     Atomic *next_id;
-    /* Channels hashmapping */
-    Hashmap *channels;
+    /* Topics mapping */
+    Hashmap *topics;
     /* ACK awaiting hashmapping fds (Unused) */
     Hashmap *ack_waiting;
     /* Tracking clients */
@@ -160,5 +161,11 @@ extern struct global global;
 
 Buffer *recv_packet(const int, Ringbuffer *, uint8_t *);
 int start_server(const char *, char *, int);
+int publish_message(Topic *, uint8_t, uint8_t, const uint8_t *, int, const uint8_t *);
+int publish_message2(Topic *, Message *, int);
+void store_message(Topic *, const uint64_t, uint8_t, uint8_t, const uint8_t *, int);
+void retain_message(Topic *, const uint64_t, uint8_t, uint8_t, const uint8_t *);
+void retain_message2(Topic *, Message *);
+
 
 #endif

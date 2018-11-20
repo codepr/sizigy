@@ -34,7 +34,7 @@
 #include "protocol.h"
 
 
-char *readline(char *prompt) {
+static const char *readline(const char *prompt) {
     fputs(prompt, stdout);
     char *line = malloc(BUFSIZE), *linep = line;
     size_t lenmax = BUFSIZE, len = lenmax;
@@ -75,21 +75,22 @@ int main(int argc, char **argv) {
     int connfd = make_connection("127.0.0.1", 9090);
     ssize_t n = 0;
     char buffer[BUFSIZE];
-    Request *quit = build_ack_req(QUIT, "");
+    Request *quit = build_ack_req(QUIT, (const uint8_t *) "");
     Buffer *quitp = pack_request(quit);
 
     while (1) {
-        char *input = readline("> ");
+        const char *input = readline("> ");
 
         if (strncasecmp(input, "QUIT", 4) == 0) {
             if ((n = sendall(connfd, quitp->data,
                             quitp->size, &(ssize_t) { 0 })) < 0)
                 printf("Error packing\n");
-            free(input);
+            free((char *) input);
             break;
         }
 
-        Request *pub = build_subscribe_request(0xfc, 0x03, 0x00, "test01", input);
+        Request *pub = build_subscribe_request(0xfc, 0x03, 0x00,
+                (const uint8_t *) "test01", (const uint8_t *) input);
         Buffer *p_pub = pack_request(pub);
 
         if ((n = sendall(connfd, p_pub->data,
@@ -102,7 +103,7 @@ int main(int argc, char **argv) {
         }
 
         free(p_pub);
-        free(input);
+        free((char *) input);
     }
 
     free(quit);

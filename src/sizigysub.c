@@ -120,11 +120,12 @@ int main(int argc, char **argv) {
     set_nonblocking(connfd);
     add_epoll(epollfd, connfd, NULL);
     ssize_t n;
-    /* Create a protocol formatted packet to subscribe to a channel */
-    Request *sub_r = build_subscribe_request(REQUEST, SUBSCRIBE, AT_MOST_ONCE, "test01", "");
+    const uint8_t *topic = (const uint8_t *) "test01";
+    /* Create a protocol formatted packet to subscribe to a topic */
+    Request *sub_r = build_subscribe_request(REQUEST, SUBSCRIBE, AT_MOST_ONCE, topic, (const uint8_t *) "");
     /* Pack it in order to be sent in binary format */
     Buffer *sp = pack_request(sub_r);
-    /* Subscribe to the channel */
+    /* Subscribe to the topic */
     if ((n = sendall(connfd, sp->data, sp->size, &(ssize_t) { 0 })) < 0)
         return -1;
 

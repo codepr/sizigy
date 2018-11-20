@@ -237,7 +237,6 @@ int recvall(const int sfd, Ringbuffer *ringbuf, ssize_t len) {
 int recvbytes(const int sfd, Ringbuffer *ringbuf, ssize_t len, size_t bufsize) {
     int n = 0;
     int total = 0;
-    DEBUG("BUFSIZE %d", bufsize);
     uint8_t buf[bufsize];
     while (total < bufsize) {
         if ((n = recv(sfd, buf, bufsize - total, 0)) < 0) {

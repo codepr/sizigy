@@ -27,8 +27,9 @@
  */
 
 #include <stdio.h>
+#include <stdint.h>
 #include "queue.h"
-#include "channel.h"
+/* #include "topic.h" */
 
 
 Queue *create_queue(void) {
