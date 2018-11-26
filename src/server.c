@@ -188,7 +188,7 @@ static void set_ack_reply(Client *c, const uint8_t opcode, const uint8_t rc) {
     Buffer *b = buffer_init(ack->header->size);
     pack_ack(b, ack);
     set_reply(c, opcode, b);
-    free_ack(ack);
+    free_ack(&ack);
 }
 
 
@@ -227,7 +227,7 @@ static int connect_handler(SizigyDB *db, Client *c) {
     reply_connack(c, rc);
     update_client_last_action(c);
 
-    free_connect(pkt);
+    free_connect(&pkt);
 
     return 0;
 }
@@ -280,17 +280,17 @@ static int subscribe_handler(SizigyDB *db, Client *c) {
         if ((raw = hashmap_get(db->topics, pkt->topic))) {
             t = (Topic *) raw;
         } else {
-            t = create_topic(strdup((char *) pkt->topic));
+            t = create_topic((char *) pkt->topic);
             hashmap_put(db->topics, strdup((char *) pkt->topic), t);
         }
-
         reply_suback(c, rc);
         Subscription *s = create_subscription(c, t->name, pkt->qos);
         add_subscriber(db, s);
         c->reply->retained = t->retained;
         // Update subscriptions for the client
-        c->subscriptions = list_head_insert(c->subscriptions, (void *) t->name);
     }
+
+    free_subscribe(&pkt);
 
     DEBUG("Sending SUBACK to %s r=%d", c->id, rc);
 
@@ -406,9 +406,8 @@ static int request_handler(SizigyDB *db, Client *client) {
     /* Free ring buffer as we alredy have all needed informations in memory */
     ringbuf_free(rbuf);
 
-    if (read_all == 1) {
+    if (read_all == 1)
         return -1;
-    }
 
     update_client_last_action(client);
 
@@ -470,19 +469,17 @@ static int reply_handler(SizigyDB *db, Client *client) {
         if ((raw = hashmap_get(db->topics, (void *) p->topic))) {
             t = (Topic *) raw;
         } else {
-            t = create_topic(strdup((char *) p->topic));
+            t = create_topic((char *) p->topic);
             hashmap_put(db->topics, strdup((const char *) p->topic), t);
         }
 
         DEBUG("Received PUBLISH from %s t=%s q=%d r=%d (%ld bytes)",
                 client->id, p->topic, p->qos, p->retain, p->header->size);
 
-        double tic = clock();
         sent = publish_message(t, p, (const uint8_t *) strdup((char *) client->id));
-        double elapsed = (clock() - tic) / CLOCKS_PER_SEC;
-        int load = (sent / elapsed);
 
-        if (sent > -1) update_client_last_action(client);
+        if (sent > -1)
+            update_client_last_action(client);
 
         // Check for QOS level
         if (p->qos == 1) {
@@ -494,12 +491,9 @@ static int reply_handler(SizigyDB *db, Client *client) {
                 perror("send(2): can't write on socket descriptor");
                 ret = -1;
             }
-            free_ack(ack);
+            free_ack(&ack);
             buffer_destroy(res);
         }
-        free(p->header);
-        free(p);
-        /* free_publish(reply->publish); */
     } else {
 
         if ((sendall(reply->fd, reply->payload->data,
@@ -507,12 +501,9 @@ static int reply_handler(SizigyDB *db, Client *client) {
             perror("send(2): can't write on socket descriptor");
             ret = -1;
         }
-
-        buffer_destroy(reply->payload);
     }
 
-    free(client->reply);
-    client->reply = NULL;
+    free_reply(&client->reply);
 
     /* Set up EPOLL event for read fds */
     client->ctx_handler = request_handler;
@@ -565,14 +556,13 @@ static int accept_handler(SizigyDB *db, Client *server) {
 
     client->id = (uint8_t *) id;
     client->reply = NULL;
-    client->subscriptions = list_create();
 
     /* If the socket is listening in the bus port, add the connection to the peers */
     if (sin.sin_port == db->bus_port)
         db->peers = list_head_insert(db->peers, client);
 
     /* Add new accepted server to the config hashmap */
-    add_client(db, client);
+    /* add_client(db, client); */
 
     /* Add it to the epoll loop */
     add_epoll(db->epollfd, clientsock, client);
@@ -587,8 +577,9 @@ static int accept_handler(SizigyDB *db, Client *server) {
 static int check_client_status(void *t1, void *t2) {
     if (!t2)
         return HASHMAP_ERR;
+    SizigyDB *db = (SizigyDB *) t1;
     hashmap_entry *kv = (hashmap_entry *) t2;
-    if (!kv || kv->val)
+    if (!kv || !kv->val)
         return HASHMAP_OK;
     uint64_t now = (uint64_t) time(NULL);
     // free value field
@@ -602,6 +593,8 @@ static int check_client_status(void *t1, void *t2) {
         shutdown(c->fd, 0);
         close(c->fd);
         c->status = OFFLINE;
+        /* del_epoll(db->epollfd, c->fd); */
+        /* del_client(db, c); */
         return HASHMAP_OK;
     }
     return HASHMAP_ERR;
@@ -691,7 +684,7 @@ static int destroy_queue_data(void *t1, void *t2) {
     QueueItem *item = t->messages->front;
     while (item) {
         Message *m = (Message *) item->data;
-        destroy_message(m);
+        destroy_message(&m);
         item = item->next;
     }
     return HASHMAP_OK;
@@ -706,7 +699,7 @@ static int destroy_topics(void *t1, void *t2) {
         return HASHMAP_OK;
     // free value field
     Topic *t = (Topic *) kv->val;
-    destroy_topic(t);
+    destroy_topic(&t);
     if (kv->key)
         free(kv->key);
     return HASHMAP_OK;
@@ -720,22 +713,7 @@ static int destroy_clients(void *t1, void *t2) {
     if (!kv || !kv->val)
         return HASHMAP_OK;
     Client *c = (Client *) kv->val;
-    if (c->id) {
-        free(c->id);
-        c->id = NULL;
-    }
-    if (c->reply) {
-        free(c->reply);
-        c->reply = NULL;
-    }
-    if (c->subscriptions)
-        list_release(c->subscriptions, 0);
-    if (c->addr) {
-        free((char *) c->addr);
-        c->addr = NULL;
-    }
-    free(c);
-    c = NULL;
+    free_client(&c);
     return HASHMAP_OK;
 }
 
@@ -750,7 +728,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     config.loglevel = DEBUG;
     config.run = eventfd(0, EFD_NONBLOCK);
     pthread_mutex_init(&(config.lock), NULL);
-    config.keepalive = 60;
+    config.keepalive = 10;
 
     SizigyDB sizigydb;
 
@@ -760,6 +738,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     sizigydb.ack_waiting = hashmap_create();
     sizigydb.clients = hashmap_create();
     sizigydb.peers = list_create();
+    pthread_mutex_init(&(sizigydb.lock), NULL);
     pthread_mutex_init(&(config.lock), NULL);
 
     /* Initialize epollfd for server component */
@@ -816,7 +795,6 @@ int start_server(const char *addr, char *port, int node_fd) {
         .ctx_handler = accept_handler,
         .id = (uint8_t *) "server",
         .reply = NULL,
-        .subscriptions = list_create(),
         .ptr = NULL
     };
 
@@ -831,7 +809,6 @@ int start_server(const char *addr, char *port, int node_fd) {
         .ctx_handler = accept_handler,
         .id = (uint8_t *) "bus",
         .reply = NULL,
-        .subscriptions = list_create(),
         .ptr = NULL
     };
 
@@ -859,7 +836,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     for (int i = 0; i < EPOLL_WORKERS; ++i)
         pthread_create(&workers[i], NULL, worker, (void *) &sizigydb);
 
-    INFO("Sizigy v0.6.0");
+    INFO("Sizigy v0.6.1");
     INFO("Starting server on %s:%s", addr, port);
 
     Client node = {
@@ -872,7 +849,6 @@ int start_server(const char *addr, char *port, int node_fd) {
         .last_action_time = 0,
         .id = (uint8_t *) "node",
         .reply = NULL,
-        .subscriptions = list_create(),
         .ptr = NULL
     };
 
@@ -891,20 +867,9 @@ int start_server(const char *addr, char *port, int node_fd) {
 
 cleanup:
     /* Free all resources allocated */
-    /* hashmap_iterate2(sizigydb.topics, destroy_queue_data, NULL); */
-    /* hashmap_iterate2(sizigydb.topics, destroy_topics, NULL); */
-    /* hashmap_iterate2(sizigydb.clients, destroy_clients, NULL); */
-    /* hashmap_release(sizigydb.topics); */
-    /* hashmap_release(sizigydb.clients); */
     hashmap_release_map(sizigydb.topics, destroy_topics);
     hashmap_release_map(sizigydb.clients, destroy_clients);
     hashmap_release(sizigydb.ack_waiting);
-    /* free_atomic(server.last_action_time); */
-    /* free_atomic(node.last_action_time); */
-    /* free_atomic(bus.last_action_time); */
-    free(server.subscriptions);
-    free(bus.subscriptions);
-    free(node.subscriptions);
     list_release(sizigydb.peers, 1);
     pthread_mutex_destroy(&(config.lock));
     pthread_mutex_destroy(&(sizigydb.lock));
@@ -916,6 +881,10 @@ cleanup:
 void retain_message(Topic *t, Publish *msg, const uint8_t *sender) {
     Message *m = create_message(msg, sender);
     m->retained = 1;
+    /* Check if there was a retained message, in case, we need to overwrite it
+       and free the previous one */
+    if (t->retained)
+        destroy_message(&t->retained);
     t->retained = m;
 }
 
@@ -931,6 +900,8 @@ int publish_message(Topic *t, Publish *msg, const uint8_t *sender) {
 
     if (msg->retain)
         retain_message(t, msg, sender);
+    else
+        free((char *) sender);
 
     /* Iterate through all the subscribers to send them the message */
     list_node *cursor = t->subscribers->head;
@@ -950,4 +921,34 @@ int publish_message(Topic *t, Publish *msg, const uint8_t *sender) {
     buffer_destroy(b);
 
     return total_bytes_sent;
+}
+
+void free_reply(Reply **r) {
+    if (!*r)
+        return;
+    if ((*r)->opcode == PUBLISH && (*r)->publish)
+        free_publish(&(*r)->publish);
+    else if ((*r)->payload) {
+        buffer_destroy((*r)->payload);
+        (*r)->payload = NULL;
+    }
+    free(*r);
+    *r = NULL;
+}
+
+
+void free_client(Client **c) {
+    if (!*c)
+        return;
+    if ((*c)->id) {
+        free((*c)->id);
+        (*c)->id = NULL;
+    }
+    free_reply(&(*c)->reply);
+    if ((*c)->addr) {
+        free((char *) (*c)->addr);
+        (*c)->addr = NULL;
+    }
+    free(*c);
+    *c = NULL;
 }

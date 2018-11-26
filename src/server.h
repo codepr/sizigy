@@ -108,6 +108,8 @@ int start_server(const char *, char *, int);
 int publish_message(Topic *, Publish *, const uint8_t *);
 void store_message(Topic *, const uint64_t, uint8_t, uint8_t, const uint8_t *, int);
 void retain_message(Topic *, Publish *, const uint8_t *);
+void free_reply(Reply **);
+void free_client(Client **);
 
 
 #endif

@@ -28,9 +28,15 @@
 
 #include <string.h>
 #include "sizigy.h"
+#include "server.h"
 
 
 void add_client(SizigyDB *db, Client *c) {
+    /* void *old_raw = hashmap_get(db->clients, c->id); */
+    /* if (old_raw) { */
+    /*     free_client(&c); */
+    /*     return; */
+    /* } */
     hashmap_put(db->clients, c->id, c);
 }
 
@@ -67,21 +73,21 @@ Topic *create_topic(char *name) {
 }
 
 
-void destroy_topic(Topic *t) {
-    if (!t)
+void destroy_topic(Topic **t) {
+    if (!*t)
         return;
-    if (t->name) {
-        free((char *) t->name);
-        t->name = NULL;
+    if ((*t)->name) {
+        free((char *) (*t)->name);
+        (*t)->name = NULL;
     }
-    if (t->subscribers)
-        list_release(t->subscribers, 1);
-    if (t->messages)
-        release_queue(t->messages);
-    if (t->retained)
-        destroy_message(t->retained);
-    free(t);
-    t = NULL;
+    if ((*t)->subscribers)
+        list_release((*t)->subscribers, 1);
+    if ((*t)->messages)
+        release_queue((*t)->messages);
+    if ((*t)->retained)
+        destroy_message(&(*t)->retained);
+    free(*t);
+    *t = NULL;
 }
 
 
@@ -130,15 +136,15 @@ Subscription *create_subscription(Client *c, const char *topic, uint8_t qos) {
 }
 
 
-void destroy_subscription(Subscription *s) {
-    if (!s)
+void destroy_subscription(Subscription **s) {
+    if (!*s)
         return;
-    if (s->topic) {
-        free((void *) s->topic);
-        s->topic = NULL;
+    if ((*s)->topic) {
+        free((void *) (*s)->topic);
+        (*s)->topic = NULL;
     }
-    free(s);
-    s = NULL;
+    free(*s);
+    *s = NULL;
 }
 
 
@@ -148,8 +154,8 @@ Message *create_message(Publish *msg, const uint8_t *sender) {
     m->qos = msg->qos;
     m->dup = msg->dup;
     m->sender = sender;
-    m->topic = msg->topic;
-    m->payload = msg->message;
+    m->topic = (const uint8_t *) strdup((const char *) msg->topic);
+    m->payload = (const uint8_t *) strdup((const char *) msg->message);
     m->retained = msg->retain;
     m->creation_time = time(NULL);
 
@@ -157,21 +163,21 @@ Message *create_message(Publish *msg, const uint8_t *sender) {
 }
 
 
-void destroy_message(Message *m) {
-    if (!m)
+void destroy_message(Message **m) {
+    if (!*m)
         return;
-    if (m->sender) {
-        free((uint8_t *) m->sender);
-        m->sender = NULL;
+    if ((*m)->sender) {
+        free((uint8_t *) (*m)->sender);
+        (*m)->sender = NULL;
     }
-    if (m->topic) {
-        free((uint8_t *) m->topic);
-        m->topic = NULL;
+    if ((*m)->topic) {
+        free((uint8_t *) (*m)->topic);
+        (*m)->topic = NULL;
     }
-    if (m->payload) {
-        free((uint8_t *) m->payload);
-        m->payload = NULL;
+    if ((*m)->payload) {
+        free((uint8_t *) (*m)->payload);
+        (*m)->payload = NULL;
     }
-    free(m);
-    m = NULL;
+    free(*m);
+    *m = NULL;
 }

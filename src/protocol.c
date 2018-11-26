@@ -446,81 +446,81 @@ void pack_ack(Buffer *b, Ack *pkt) {
 }
 
 
-void free_ack(Ack *a) {
-    if (!a)
+void free_ack(Ack **a) {
+    if (!*a)
         return;
-    if (a->header) {
-        free(a->header);
-        a->header = NULL;
+    if ((*a)->header) {
+        free((*a)->header);
+        (*a)->header = NULL;
     }
-    free(a);
-    a = NULL;
+    free(*a);
+    *a = NULL;
 }
 
 
-void free_connect(Connect *c) {
-    if (!c)
+void free_connect(Connect **c) {
+    if (!*c)
         return;
-    if (c->header) {
-        free(c->header);
-        c->header = NULL;
+    if ((*c)->header) {
+        free((*c)->header);
+        (*c)->header = NULL;
     }
-    if (c->id) {
-        free(c->id);
-        c->id = NULL;
+    if ((*c)->id) {
+        free((*c)->id);
+        (*c)->id = NULL;
     }
-    free(c);
-    c = NULL;
+    free(*c);
+    *c = NULL;
 }
 
 
-void free_publish(Publish *p) {
-    if (!p)
+void free_publish(Publish **p) {
+    if (!*p)
         return;
-    if (p->header) {
-        free(p->header);
-        p->header = NULL;
+    if ((*p)->header) {
+        free((*p)->header);
+        (*p)->header = NULL;
     }
-    if (p->topic) {
-        free(p->topic);
-        p->topic = NULL;
+    if ((*p)->topic) {
+        free((*p)->topic);
+        (*p)->topic = NULL;
     }
-    if (p->message) {
-        free(p->message);
-        p->message = NULL;
+    if ((*p)->message) {
+        free((*p)->message);
+        (*p)->message = NULL;
     }
-    free(p);
-    p = NULL;
+    free(*p);
+    *p = NULL;
 }
 
 
-void free_subscribe(Subscribe *s) {
-    if (!s)
+void free_subscribe(Subscribe **s) {
+    if (!*s)
         return;
-    if (s->header) {
-        free(s->header);
-        s->header = NULL;
+    if ((*s)->header) {
+        free((*s)->header);
+        (*s)->header = NULL;
     }
-    if (s->topic) {
-        free(s->topic);
-        s->topic = NULL;
+    if ((*s)->topic) {
+        free((*s)->topic);
+        (*s)->topic = NULL;
     }
-    free(s);
-    s = NULL;
+    free(*s);
+    *s = NULL;
 }
 
 
-void free_unsubscribe(Unsubscribe *u) {
-    if (!u)
+void free_unsubscribe(Unsubscribe **u) {
+    if (!*u)
         return;
-    if (u->header) {
-        free(u->header);
-        u->header = NULL;
+    if ((*u)->header) {
+        free((*u)->header);
+        (*u)->header = NULL;
     }
-    if (u->topic) {
-        free(u->topic);
-        u->topic = NULL;
+    if ((*u)->topic) {
+        free((*u)->topic);
+        (*u)->topic = NULL;
     }
-    free(u);
-    u = NULL;
+    free(*u);
+    *u = NULL;
 }

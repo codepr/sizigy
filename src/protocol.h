@@ -171,11 +171,11 @@ Unsubscribe *unsubscribe_pkt(const uint8_t *);
 Publish *publish_pkt(const uint8_t *,
         const uint8_t *, const uint8_t, const uint8_t, const uint8_t);
 
-void free_ack(Ack *);
-void free_connect(Connect *);
-void free_publish(Publish *);
-void free_subscribe(Subscribe *);
-void free_unsubscribe(Unsubscribe *);
+void free_ack(Ack **);
+void free_connect(Connect **);
+void free_publish(Publish **);
+void free_subscribe(Subscribe **);
+void free_unsubscribe(Unsubscribe **);
 
 void pack_connect(Buffer *, Connect *);
 void pack_subscribe(Buffer *, Subscribe *);

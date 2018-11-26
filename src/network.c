@@ -285,6 +285,13 @@ void mod_epoll(const int efd, const int fd, const int evs, void *data) {
     }
 }
 
+
+void del_epoll(const int efd, const int fd) {
+    if (epoll_ctl(efd, EPOLL_CTL_DEL, fd, NULL) < 0)
+        perror("epoll_ctl(2): set epollout");
+}
+
+
 /* Host-to-network (native endian to big endian) */
 void htonll(uint8_t *block, uint_least64_t num) {
     block[0]=num>>56&0xFF;

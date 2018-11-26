@@ -52,7 +52,6 @@ struct client {
     int (*ctx_handler)(SizigyDB *, Client *);
     uint8_t *id;
     Reply *reply;
-    List *subscriptions;
     void *ptr;
 };
 
@@ -108,7 +107,7 @@ typedef struct {
 
 // Message ops
 Message *create_message(Publish *, const uint8_t *);
-void destroy_message(Message *);
+void destroy_message(Message **);
 
 
 // Client ops
@@ -120,12 +119,12 @@ uint64_t get_client_last_action(Client *);
 
 // Subscriber ops
 Subscription *create_subscription(Client *, const char *, uint8_t);
-void destroy_subscription(Subscription *);
+void destroy_subscription(Subscription **);
 
 
 // topic ops
 Topic *create_topic(char *);
-void destroy_topic(Topic *);
+void destroy_topic(Topic **);
 void add_topic(SizigyDB *, char *);
 void add_subscriber(SizigyDB *, Subscription *);
 void del_subscriber(SizigyDB *, Subscription *);

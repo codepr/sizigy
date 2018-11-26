@@ -58,6 +58,7 @@ int accept_connection(const int);
 /* Epoll management functions */
 void add_epoll(const int, const int, void *);
 void mod_epoll(const int, const int, const int, void *);
+void del_epoll(const int, const int);
 
 /* I/O management functions */
 int sendall(const int, uint8_t *, ssize_t, ssize_t *);
