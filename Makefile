@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-std=gnu11 -Wall -lrt -lpthread -O3 -pedantic
+CFLAGS=-std=c11 -Wall -lrt -lpthread -O3 -pedantic -D_DEFAULT_SOURCE
 DEBUGFLAGS=-ggdb -fsanitize=address -fno-omit-frame-pointer -pg
 ADDITIONAL=-fsanitize=undefined
 BIN=./bin
@@ -22,6 +22,12 @@ debug:
 	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(DEBUGFLAGS) $(SRC) src/main.c -o $(BIN)/sizigy \
 		&& $(CC) $(CFLAGS) $(DEBUGFLAGS) $(SRC) src/sizigypub.c -o $(BIN)/sizigypub \
 		&& $(CC) $(CFLAGS) $(DEBUGFLAGS) $(SRC) src/sizigysub.c -o $(BIN)/sizigysub
+
+single:
+	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(DEBUGFLAGS) $(SRC) src/main.c -o $(BIN)/sizigy
+
+s:
+	mkdir -p $(BIN) && $(CC) $(CFLAGS) $(SRC) src/main.c -o $(BIN)/sizigy
 
 clean:
 	rm -f $(BIN)/*

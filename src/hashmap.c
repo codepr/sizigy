@@ -307,11 +307,20 @@ static int destroy(void *t1, void *t2) {
 void hashmap_release(Hashmap *m){
     pthread_mutex_destroy(&m->lock);
     hashmap_iterate2(m, destroy, NULL);
-    if (m) {
-        if (m->entries)
-            free(m->entries);
-        free(m);
-    }
+    if (!m || !m->entries)
+        return;
+    free(m->entries);
+    free(m);
+}
+
+
+void hashmap_release_map(Hashmap *m, int (*func)(void *, void *)) {
+    pthread_mutex_destroy(&m->lock);
+    hashmap_iterate2(m, func, NULL);
+    if (!m || !m->entries)
+        return;
+    free(m->entries);
+    free(m);
 }
 
 

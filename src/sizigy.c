@@ -41,7 +41,9 @@ void del_client(SizigyDB *db, Client *c) {
 
 
 void update_client_last_action(Client *c) {
-    write_atomic(c->last_action_time, (const uint64_t) time(NULL));
+    /* write_atomic(c->last_action_time, (const uint64_t) time(NULL)); */
+    __sync_val_compare_and_swap(&c->last_action_time,
+            c->last_action_time, (const uint64_t) time(NULL));
 }
 
 
@@ -66,15 +68,20 @@ Topic *create_topic(char *name) {
 
 
 void destroy_topic(Topic *t) {
-    if (t->name)
+    if (!t)
+        return;
+    if (t->name) {
         free((char *) t->name);
+        t->name = NULL;
+    }
     if (t->subscribers)
         list_release(t->subscribers, 1);
     if (t->messages)
         release_queue(t->messages);
     if (t->retained)
-        free(t->retained);
+        destroy_message(t->retained);
     free(t);
+    t = NULL;
 }
 
 
@@ -124,20 +131,26 @@ Subscription *create_subscription(Client *c, const char *topic, uint8_t qos) {
 
 
 void destroy_subscription(Subscription *s) {
-    if (s->topic) free((void *) s->topic);
+    if (!s)
+        return;
+    if (s->topic) {
+        free((void *) s->topic);
+        s->topic = NULL;
+    }
     free(s);
+    s = NULL;
 }
 
 
-Message *create_message(uint8_t qos, uint8_t retain, uint8_t dup, const uint8_t *topic, const uint8_t *payload, const uint8_t *sender) {
+Message *create_message(Publish *msg, const uint8_t *sender) {
 
-    Message *m = malloc(sizeof(Message));
-    m->qos = qos;
-    m->dup = dup;
+    Message *m = malloc(sizeof(*m));
+    m->qos = msg->qos;
+    m->dup = msg->dup;
     m->sender = sender;
-    m->topic = topic;
-    m->payload = payload;
-    m->retained = retain;
+    m->topic = msg->topic;
+    m->payload = msg->message;
+    m->retained = msg->retain;
     m->creation_time = time(NULL);
 
     return m;
@@ -145,8 +158,20 @@ Message *create_message(uint8_t qos, uint8_t retain, uint8_t dup, const uint8_t 
 
 
 void destroy_message(Message *m) {
-    free((uint8_t *) m->sender);
-    free((uint8_t *) m->topic);
-    free((uint8_t *) m->payload);
+    if (!m)
+        return;
+    if (m->sender) {
+        free((uint8_t *) m->sender);
+        m->sender = NULL;
+    }
+    if (m->topic) {
+        free((uint8_t *) m->topic);
+        m->topic = NULL;
+    }
+    if (m->payload) {
+        free((uint8_t *) m->payload);
+        m->payload = NULL;
+    }
     free(m);
+    m = NULL;
 }

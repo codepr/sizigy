@@ -37,7 +37,6 @@
 #include "sizigy.h"
 #include "hashmap.h"
 #include "ringbuf.h"
-// #include "topic.h"
 #include "protocol.h"
 
 
@@ -49,7 +48,7 @@
 #define ERR_MISS_MEX  0x66
 #define ERR_MISS_ID   0x67
 
-#define OK          "OK\n"
+// #define OK          "OK\n"
 #define E_UNKNOWN   "ERR: Unknown command\n"
 #define E_MISS_CHAN "ERR: Missing topic name\n"
 #define E_MISS_MEX  "ERR: Missing message to publish\n"
@@ -58,39 +57,10 @@
 #define TIMEOUT         60
 
 
-enum REPLY_TYPE {
-    NO_REPLY,
-    CONNACK_REPLY,
-    SUBACK_REPLY,
-    PUBACK_REPLY,
-    PINGRESP_REPLY,
-    JACK_REPLY,
-    DATA_REPLY
-};
-
 enum STATUS { ONLINE, OFFLINE };
 
 
-typedef struct client Client;
-
 typedef struct reply Reply;
-
-// struct client {
-//     uint8_t type;
-//     uint8_t status;
-//     uint16_t keepalive;
-//     uint64_t last_action_time;
-//     const char *addr;
-//     int fd;
-//     int (*ctx_handler)(SizigyDB *, Client *);
-//     char *id;
-//     Reply *reply;
-//     List *subscriptions;
-//     union {
-//         Request *req;
-//         Response *res;
-//     };
-// };
 
 
 struct socks {
@@ -100,21 +70,13 @@ struct socks {
 
 
 struct reply {
-    uint8_t type;
+    uint8_t opcode;
     int fd;
     union {
-        /* Publish reply */
-        struct {
-            uint8_t qos;
-            uint8_t retain;
-            const uint8_t *data;
-            const uint8_t *topic;
-        };
-        /* Suback reply */
-        Message *retained;
-        /* Common ack reply */
-        uint8_t rc;
+        Buffer *payload;
+        Publish *publish;
     };
+    Message *retained;
 };
 
 
@@ -124,31 +86,13 @@ struct command {
 };
 
 
-struct global {
+struct config {
     /* Eventfd to break the epoll_wait loop in case of signals */
     uint8_t run;
     /* Logging level, to be set by reading configuration */
     uint8_t loglevel;
-    /* Bus listening port, for peers connections */
-    int bus_port;
-    /* Bus epoll fd */
-    int bepollfd;
-    /* Atomic auto-increment unsigned long long int to get the next message ID */
-    Atomic *next_id;
-    /* Topics mapping */
-    Hashmap *topics;
-    /* ACK awaiting hashmapping fds (Unused) */
-    Hashmap *ack_waiting;
-    /* Tracking clients */
-    Hashmap *clients;
-    /* Peers connected */
-    List *peers;
-    /* Global lock to avoid race conditions on critical shared parts */
+    /* config lock to avoid race conditions on critical shared parts */
     pthread_mutex_t lock;
-    /* Approximation of the load */
-    Atomic *throughput;
-    /* Throttler utility */
-    Throttler *throttler;
     /* Epoll workers count */
     int workers;
     /* Keepalive */
@@ -156,16 +100,14 @@ struct global {
 };
 
 
-extern struct global global;
+extern struct config config;
 
 
 Buffer *recv_packet(const int, Ringbuffer *, uint8_t *);
 int start_server(const char *, char *, int);
-int publish_message(Topic *, uint8_t, uint8_t, const uint8_t *, int, const uint8_t *);
-int publish_message2(Topic *, Message *, int);
+int publish_message(Topic *, Publish *, const uint8_t *);
 void store_message(Topic *, const uint64_t, uint8_t, uint8_t, const uint8_t *, int);
-void retain_message(Topic *, const uint64_t, uint8_t, uint8_t, const uint8_t *);
-void retain_message2(Topic *, Message *);
+void retain_message(Topic *, Publish *, const uint8_t *);
 
 
 #endif

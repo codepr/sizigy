@@ -66,6 +66,7 @@ typedef struct {
 /* Hashmap API */
 Hashmap *hashmap_create(void);
 void hashmap_release(Hashmap *);
+void hashmap_release_map(Hashmap *, int (*func)(void *, void *));
 int hashmap_put(Hashmap *, void *, void *);
 void *hashmap_get(Hashmap *, void *);
 hashmap_entry *hashmap_get_entry(Hashmap *, void *);

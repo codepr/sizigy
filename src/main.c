@@ -37,7 +37,7 @@
 
 void sigint_handler(int signum) {
     for (int i = 0; i < EPOLL_WORKERS + 1; i++) {
-        eventfd_write(global.run, 1);
+        eventfd_write(config.run, 1);
         usleep(1500);
     }
 }
@@ -82,10 +82,10 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (debug == 1) global.loglevel = DEBUG;
-    else global.loglevel = INFO;
+    if (debug == 1) config.loglevel = DEBUG;
+    else config.loglevel = INFO;
 
-    global.workers = workers;
+    config.workers = workers;
 
     start_server(addr, port, fd);
     return 0;

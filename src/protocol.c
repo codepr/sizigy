@@ -39,357 +39,7 @@
 
 
 static void pack_header(Header *, Buffer *);
-static void advance_pos(Buffer *, size_t);
-
-
-static void pack_header(Header *h, Buffer *b) {
-
-    assert(h);
-
-    write_uint8(b, h->type);
-    write_uint32(b, b->size);
-    write_uint8(b, h->opcode);
-    write_uint32(b, h->data_len);
-}
-
-
-static void pack_connect_packet(Buffer *b,
-        uint8_t clean_session, uint8_t *sub_id) {
-
-    assert(b);
-
-    write_uint16(b, strlen((char *) sub_id));
-    write_uint8(b, clean_session);
-    write_uint16(b, 60);  // FIXME: Placeholder
-    write_string(b, sub_id);
-}
-
-
-static void pack_subscribe_packet(Buffer *b, uint8_t qos,
-        uint8_t retain, uint8_t *topic, uint8_t *message) {
-
-    assert(b);
-
-    write_uint16(b, strlen((char *) topic));
-    write_uint32(b, strlen((char *) message));
-    write_uint8(b, retain);
-    write_uint8(b, qos);
-    write_string(b, topic);
-    write_string(b, message);
-}
-
-
-static void pack_ack_packet(Buffer *b, uint64_t id, uint8_t *data) {
-
-    assert(b);
-
-    write_uint16(b, strlen((char *) data));
-    write_uint64(b, id);
-    write_string(b, data);
-}
-
-
-Buffer *pack_request(Request *request) {
-
-    assert(request);
-
-    uint32_t tlen = 0;
-    Buffer *b = NULL;
-
-    switch (request->header->opcode) {
-        case CONNECT:
-            // move index after data size value, where opcode start
-            tlen = HEADERLEN + sizeof(uint16_t) +
-                sizeof(uint8_t) + request->header->data_len;
-            b = buffer_init(tlen);
-            pack_header(request->header, b);
-            pack_connect_packet(b, request->clean_session, request->sub_id);
-            break;
-        case REPLICA:
-        case PUBLISH:
-        case SUBSCRIBE:
-            tlen = HEADERLEN + sizeof(uint16_t) +
-                (2 * sizeof(uint8_t)) + sizeof(uint32_t) +
-                request->topic_len + request->message_len;
-            b = buffer_init(tlen);
-            pack_header(request->header, b);
-            pack_subscribe_packet(b, request->qos,
-                    request->retain, request->topic, request->message);
-            break;
-        case QUIT:
-        case PINGREQ:
-        case CLUSTER_JOIN:
-        case CLUSTER_JOIN_ACK:
-            tlen = HEADERLEN + sizeof(uint16_t) +
-                sizeof(uint64_t) + request->ack_len;
-            b = buffer_init(tlen);
-            pack_header(request->header, b);
-            pack_ack_packet(b, request->id, request->ack_data);
-            break;
-        case UNSUBSCRIBE:
-            tlen = HEADERLEN + request->header->data_len;
-            b = buffer_init(tlen);
-            pack_header(request->header, b);
-            write_string(b, request->data);
-            break;
-    }
-
-    return b;
-}
-
-
-int8_t unpack_request(Buffer *b, Request *r) {
-
-    assert(b);
-    assert(r);
-
-    /* Start unpacking bytes into the Request structure */
-
-    r->header = malloc(sizeof(Header));
-    if (!r->header) oom("unpacking request header");
-
-    r->header->type = read_uint8(b);
-    advance_pos(b, sizeof(uint32_t));
-    r->header->opcode = read_uint8(b);
-    r->header->data_len = read_uint32(b);
-
-    switch (r->header->opcode) {
-        case CONNECT:
-            r->sub_id_len = read_uint16(b);
-            r->clean_session = read_uint8(b);
-            r->keepalive = read_uint16(b);
-            r->sub_id = read_string(b, r->sub_id_len);
-            break;
-        case REPLICA:
-        case PUBLISH:
-        case SUBSCRIBE:
-            r->topic_len = read_uint16(b);
-            r->message_len = read_uint32(b);
-            r->qos = read_uint8(b);
-            r->retain = read_uint8(b);
-            r->topic = read_string(b, r->topic_len);
-            r->message = read_string(b, r->message_len);
-            break;
-        case CLUSTER_JOIN:
-        case CLUSTER_JOIN_ACK:
-            r->ack_len = read_uint16(b);
-            r->id = read_uint64(b);
-            r->ack_data = read_string(b, r->ack_len);
-            break;
-        case UNSUBSCRIBE:
-            r->data = read_string(b, r->header->data_len);
-            break;
-    }
-
-    return 0;
-}
-
-
-Buffer *pack_response(Response *response) {
-
-    assert(response);
-
-    Buffer *b = NULL;
-    size_t tlen = 0;
-
-    switch (response->header->opcode) {
-        case REPLICA:
-        case PUBLISH:
-            tlen = HEADERLEN + sizeof(uint32_t) + response->topic_len +
-                response->message_len + sizeof(uint16_t) +
-                (2 * sizeof(uint8_t)) + sizeof(uint64_t);
-            b = buffer_init(tlen);
-            pack_header(response->header, b);
-            write_uint16(b, response->topic_len);
-            write_uint32(b, response->message_len);
-            write_uint8(b, response->qos);
-            write_uint8(b, response->sent_count);
-            write_uint64(b, response->id);
-            write_string(b, response->topic);
-            write_string(b, response->message);
-            break;
-        case CONNACK:
-        case SUBACK:
-        case PUBACK:
-        case PINGRESP:
-        case CLUSTER_JOIN:
-        case CLUSTER_JOIN_ACK:
-            tlen = HEADERLEN + response->header->data_len + sizeof(uint8_t);
-            b = buffer_init(tlen);
-            pack_header(response->header, b);
-            write_uint8(b, response->rc);
-            break;
-    }
-
-    return b;
-}
-
-
-int8_t unpack_response(Buffer *b, Response *r) {
-
-    assert(r);
-
-    /* Start unpacking bytes into the protocol_packet_t structure */
-
-    r->header = malloc(sizeof(Header));
-    if (!r->header) oom("unpacking response");
-
-    r->header->type = read_uint8(b);
-    advance_pos(b, sizeof(uint32_t));
-    r->header->opcode = read_uint8(b);
-    r->header->data_len = read_uint32(b);
-
-    switch (r->header->opcode) {
-        case PUBLISH:
-            r->topic_len = read_uint16(b);
-            r->message_len = read_uint32(b);
-            r->qos = read_uint8(b);
-            r->sent_count = read_uint8(b);
-            r->id = read_uint64(b);
-            r->topic = read_string(b, r->topic_len);
-            r->message = read_string(b, r->message_len);
-            break;
-        case SUBACK:
-        case PINGRESP:
-        case CLUSTER_JOIN:
-        case CLUSTER_JOIN_ACK:
-            r->rc = read_uint16(b);
-            break;
-    }
-
-    return 0;
-}
-
-
-Request *build_ack_request(const uint8_t type,
-        const uint8_t opcode, const uint64_t id, const uint8_t *data) {
-
-    Request *r = malloc(sizeof(Request));
-    if (!r) oom("building ack request");
-
-    r->header = malloc(sizeof(Header));
-    if (!r->header) oom ("building header for ack request");
-
-    r->header->type = type;
-    r->header->opcode = opcode;
-    r->header->data_len = r->ack_len = strlen((char *) data);
-    r->id = id;
-    r->ack_data = (uint8_t *) data;
-
-    return r;
-}
-
-
-Request *build_connect_request(const uint8_t type,
-        const uint8_t opcode, const uint8_t clean_session, const uint8_t *sub_id) {
-
-    Request *r = malloc(sizeof(Request));
-    if (!r) oom("building connect request");
-
-    r->header = malloc(sizeof(Header));
-    if (!r->header) oom("building connect header");
-
-    r->header->type = type;
-    r->header->opcode = opcode;
-    r->clean_session = clean_session;
-    r->header->data_len = r->sub_id_len = strlen((char *) sub_id);
-    r->sub_id = (uint8_t *) sub_id;
-    r->keepalive = 60;  // FIXME: Placeholder
-
-    return r;
-}
-
-
-Request *build_unsubscribe_request(const uint8_t type, const uint8_t opcode, const uint8_t *data) {
-
-    Request *r = malloc(sizeof(Request));
-    if (!r) oom("building unsubscribe request");
-
-    r->header = malloc(sizeof(Header));
-    if (!r->header) oom("building unsubscribe header");
-
-    r->header->type = type;
-    r->header->opcode = opcode;
-    r->header->data_len = strlen((char *) data);
-    r->data = (uint8_t *) data;
-
-    return r;
-}
-
-
-Request *build_subscribe_request(const uint8_t type, const uint8_t opcode,
-        const uint8_t qos, const uint8_t *topic_name, const uint8_t *message) {
-
-    Request *r = malloc(sizeof(Request));
-    if (!r) oom("building subscribe request");
-
-    r->header = malloc(sizeof(Header));
-    if (!r->header) oom("building header of subscribe request");
-
-    uint16_t clen = strlen((char *) topic_name);
-    uint32_t mlen = strlen((char *) message);
-
-    r->header->type = type;
-    r->header->opcode = opcode;
-    r->header->data_len = clen + mlen;
-    r->qos = qos;
-    r->retain = 0;
-    r->topic_len = clen;
-    r->message_len = mlen;
-    r->topic = (uint8_t *) topic_name;
-    r->message = (uint8_t *) message;
-
-    return r;
-}
-
-
-Response *build_publish_response(const uint8_t type, const uint8_t opcode,
-        const uint8_t qos, const uint8_t *topic_name, const uint8_t *message, const uint8_t incr) {
-
-    uint64_t id = read_atomic(global.next_id);
-    if (incr == 1) {
-        id = incr_read_atomic(global.next_id);
-    }
-
-    Response *r = malloc(sizeof(Response));
-    if (!r) oom("building publish request");
-
-    r->header = malloc(sizeof(Header));
-    if (!r->header) oom("building header of publish request");
-
-    uint16_t clen = strlen((char *) topic_name);
-    uint32_t mlen = strlen((char *) message);
-
-    r->header->type = type;
-    r->header->opcode = opcode;
-    r->header->data_len = clen + mlen;
-    r->qos = qos;
-    r->id = id;
-    r->sent_count = 0;
-    r->topic_len = clen;
-    r->message_len = mlen;
-    r->topic = (uint8_t *) topic_name;
-    r->message = (uint8_t *) message;
-
-    return r;
-}
-
-
-Response *build_ack_response(const uint8_t type, const uint8_t opcode, const uint8_t rc) {
-
-    Response *r = malloc(sizeof(Response));
-    if (!r) oom("building ack request");
-
-    r->header = malloc(sizeof(Header));
-    if (!r->header) oom("building header of ack request");
-
-    r->header->type = type;
-    r->header->opcode = opcode;
-    r->header->data_len = 0;
-    r->rc = rc;
-
-    return r;
-}
+static void unpack_header(Buffer *, Header *);
 
 
 /* Init Buffer data structure, to ease byte arrays handling */
@@ -419,6 +69,7 @@ uint8_t read_uint8(Buffer *b) {
     b->pos += sizeof(uint8_t);
     return val;
 }
+
 
 uint16_t read_uint16(Buffer *b) {
     uint16_t val = ntohs(*((uint16_t *) (b->data + b->pos)));
@@ -489,4 +140,387 @@ void advance_pos(Buffer *b, size_t offset) {
     assert(b->pos + offset <= b->size);
 
     b->pos += offset;
+}
+
+// REFACTOR
+
+static void pack_header(Header *h, Buffer *b) {
+
+    assert(b);
+    assert(h);
+
+    write_uint8(b, h->opcode);
+    write_uint32(b, b->size);
+}
+
+
+static void unpack_header(Buffer *b, Header *h) {
+
+    assert(b);
+    assert(h);
+
+    h->opcode = read_uint8(b);
+    h->size = read_uint32(b);
+}
+
+
+int8_t unpack_connect(Buffer *b, Connect *pkt) {
+
+    assert(b);
+    assert(pkt);
+
+    /* Start unpacking bytes into the Request structure */
+
+    pkt->header = malloc(sizeof(Header));
+    if (!pkt->header)
+        return -EOOM;
+
+    unpack_header(b, pkt->header);
+
+    pkt->idlen = read_uint16(b);
+    pkt->clean_session = read_uint8(b);
+    pkt->keepalive = read_uint16(b);
+    pkt->id = read_string(b, pkt->idlen);
+
+    return OK;
+}
+
+
+int8_t unpack_subscribe(Buffer *b, Subscribe *s) {
+
+    assert(b);
+    assert(s);
+
+    /* Start unpacking bytes into the Request structure */
+
+    s->header = malloc(sizeof(Header));
+    if (!s->header)
+        return -EOOM;
+
+    unpack_header(b, s->header);
+
+    s->topic_len = read_uint16(b);
+    s->qos = read_uint8(b);
+    s->topic = read_string(b, s->topic_len);
+
+    return OK;
+}
+
+
+int8_t unpack_unsubscribe(Buffer *b, Unsubscribe *u) {
+
+    assert(b);
+    assert(u);
+
+    u->header = malloc(sizeof(*u->header));
+    if (!u->header)
+        return -EOOM;
+
+    unpack_header(b, u->header);
+
+    u->topic_len = read_uint16(b);
+    u->topic = read_string(b, u->topic_len);
+
+    return OK;
+}
+
+
+int8_t unpack_publish(Buffer *b, Publish *p) {
+
+    assert(b);
+    assert(p);
+
+    /* Start unpacking bytes into the Request structure */
+
+    p->header = malloc(sizeof(Header));
+    if (!p->header)
+        return -EOOM;
+
+    unpack_header(b, p->header);
+
+    p->topic_len = read_uint16(b);
+    p->message_len = read_uint32(b);
+    p->qos = read_uint8(b);
+    p->retain = read_uint8(b);
+    p->dup = read_uint8(b);
+    p->topic = read_string(b, p->topic_len);
+    p->message = read_string(b, p->message_len);
+
+    return OK;
+}
+
+
+int8_t unpack_ack(Buffer *b, Ack *a) {
+
+    assert(b);
+    assert(a);
+
+    /* Start unpacking bytes into the Request structure */
+
+    a->header = malloc(sizeof(Header));
+    if (!a->header)
+        return -EOOM;
+
+    unpack_header(b, a->header);
+
+    a->id = read_uint16(b);
+    a->rc = read_uint8(b);
+
+    return OK;
+}
+
+
+Connect *connect_pkt(const uint8_t *id,
+        const uint8_t keepalive, const uint8_t clean_session) {
+
+    assert(id);
+
+    Connect *pkt = malloc(sizeof(Connect));
+    if (!pkt) oom("building ack request");
+
+    pkt->header = malloc(sizeof(Header));
+    if (!pkt->header) oom ("building header for ack request");
+
+    pkt->header->opcode = CONNECT;
+    pkt->header->size = HEADERLEN + strlen((char *) id) +
+        (2 * sizeof(uint16_t)) + (2 * sizeof(uint8_t));
+    pkt->idlen = strlen((char *) id);
+    pkt->id = (uint8_t *) id;
+    pkt->keepalive = keepalive;
+    pkt->clean_session = clean_session;
+
+    return pkt;
+}
+
+
+Subscribe *subscribe_pkt(const uint8_t *topic, const uint8_t qos) {
+
+    assert(topic);
+
+    Subscribe *pkt = malloc(sizeof(Subscribe));
+    if (!pkt) oom("building connect request");
+
+    pkt->header = malloc(sizeof(Header));
+    if (!pkt->header) oom("building connect header");
+
+    pkt->header->opcode = SUBSCRIBE;
+    pkt->header->size = HEADERLEN + strlen((char *) topic) +
+        sizeof(uint16_t) + (3 * sizeof(uint8_t));
+    pkt->topic_len = strlen((char *) topic);
+    pkt->qos = qos;
+    pkt->topic = (uint8_t *) topic;
+
+    return pkt;
+}
+
+
+Unsubscribe *unsubscribe_pkt(const uint8_t *topic) {
+
+    assert(topic);
+
+    Unsubscribe *pkt = malloc(sizeof(*pkt));
+    if (!pkt) oom("building connect request");
+
+    pkt->header = malloc(sizeof(Header));
+    if (!pkt->header) oom("building connect header");
+
+    pkt->header->opcode = UNSUBSCRIBE;
+    pkt->header->size = HEADERLEN + strlen((char *) topic) +
+        sizeof(uint16_t) + sizeof(uint8_t);
+    pkt->topic_len = strlen((char *) topic);
+    pkt->topic = (uint8_t *) topic;
+
+    return pkt;
+}
+
+
+Publish *publish_pkt(const uint8_t *topic, const uint8_t *message,
+        const uint8_t qos, const uint8_t retain, const uint8_t dup) {
+
+    assert(topic);
+    assert(message);
+
+    Publish *pkt = malloc(sizeof(Publish));
+    if (!pkt) oom("building unsubscribe request");
+
+    pkt->header = malloc(sizeof(Header));
+    if (!pkt->header) oom("building unsubscribe header");
+
+    pkt->header->opcode = PUBLISH;
+    pkt->header->size = HEADERLEN + strlen((char *) topic) +
+        strlen((char *) message) + sizeof(uint16_t) + sizeof(uint32_t) + (5 * sizeof(uint8_t));
+    pkt->topic_len = strlen((char *) topic);
+    pkt->message_len = strlen((char *) message);
+    pkt->qos = qos;
+    pkt->retain = retain;
+    pkt->dup = dup;
+    pkt->topic = (uint8_t *) topic;
+    pkt->message = (uint8_t *) message;
+
+    return pkt;
+}
+
+
+Ack *ack_pkt(const uint8_t opcode, const uint16_t id, const uint8_t rc) {
+
+    Ack *pkt = malloc(sizeof(Ack));
+    if (!pkt) oom("building subscribe request");
+
+    pkt->header = malloc(sizeof(Header));
+    if (!pkt->header) oom("building header of subscribe request");
+
+    pkt->header->opcode = opcode;
+    pkt->header->size = HEADERLEN + sizeof(uint16_t) + sizeof(uint8_t);
+    pkt->id = id;
+    pkt->rc = rc;
+
+    return pkt;
+}
+
+
+void pack_connect(Buffer *b, Connect *pkt) {
+
+    assert(b);
+    assert(pkt);
+
+    pack_header(pkt->header, b);
+
+    write_uint16(b, strlen((char *) pkt->id));
+    write_string(b, pkt->id);
+    write_uint16(b, pkt->keepalive);  // FIXME: Placeholder
+    write_uint8(b, pkt->clean_session);
+}
+
+
+void pack_subscribe(Buffer *b, Subscribe *pkt) {
+
+    assert(b);
+    assert(pkt);
+
+    pack_header(pkt->header, b);
+
+    write_uint16(b, strlen((char *) pkt->topic));
+    write_uint8(b, pkt->qos);
+    write_string(b, pkt->topic);
+}
+
+
+void pack_unsubscribe(Buffer *b, Unsubscribe *u) {
+
+    assert(b);
+    assert(u);
+
+    pack_header(u->header, b);
+
+    write_uint16(b, u->topic_len);
+    write_string(b, u->topic);
+}
+
+
+void pack_publish(Buffer *b, Publish *pkt) {
+
+    assert(b);
+    assert(pkt);
+
+    pack_header(pkt->header, b);
+
+    write_uint16(b, strlen((char *) pkt->topic));
+    write_uint32(b, strlen((char *) pkt->message));
+    write_uint8(b, pkt->qos);
+    write_uint8(b, pkt->retain);
+    write_uint8(b, pkt->dup);
+    write_string(b, pkt->topic);
+    write_string(b, pkt->message);
+}
+
+
+void pack_ack(Buffer *b, Ack *pkt) {
+
+    assert(b);
+    assert(pkt);
+
+    pack_header(pkt->header, b);
+
+    write_uint16(b, pkt->id);
+    write_uint8(b, pkt->rc);
+}
+
+
+void free_ack(Ack *a) {
+    if (!a)
+        return;
+    if (a->header) {
+        free(a->header);
+        a->header = NULL;
+    }
+    free(a);
+    a = NULL;
+}
+
+
+void free_connect(Connect *c) {
+    if (!c)
+        return;
+    if (c->header) {
+        free(c->header);
+        c->header = NULL;
+    }
+    if (c->id) {
+        free(c->id);
+        c->id = NULL;
+    }
+    free(c);
+    c = NULL;
+}
+
+
+void free_publish(Publish *p) {
+    if (!p)
+        return;
+    if (p->header) {
+        free(p->header);
+        p->header = NULL;
+    }
+    if (p->topic) {
+        free(p->topic);
+        p->topic = NULL;
+    }
+    if (p->message) {
+        free(p->message);
+        p->message = NULL;
+    }
+    free(p);
+    p = NULL;
+}
+
+
+void free_subscribe(Subscribe *s) {
+    if (!s)
+        return;
+    if (s->header) {
+        free(s->header);
+        s->header = NULL;
+    }
+    if (s->topic) {
+        free(s->topic);
+        s->topic = NULL;
+    }
+    free(s);
+    s = NULL;
+}
+
+
+void free_unsubscribe(Unsubscribe *u) {
+    if (!u)
+        return;
+    if (u->header) {
+        free(u->header);
+        u->header = NULL;
+    }
+    if (u->topic) {
+        free(u->topic);
+        u->topic = NULL;
+    }
+    free(u);
+    u = NULL;
 }

@@ -43,20 +43,17 @@ typedef struct sizigydb SizigyDB;
 
 
 struct client {
-    uint8_t type;
     uint8_t status;
     uint16_t keepalive;
-    Atomic *last_action_time;
+    // Atomic *last_action_time;
+    uint64_t last_action_time;
     const char *addr;
     int fd;
     int (*ctx_handler)(SizigyDB *, Client *);
-    char *id;
+    uint8_t *id;
     Reply *reply;
     List *subscriptions;
-    union {
-        Request *req;
-        Response *res;
-    };
+    void *ptr;
 };
 
 
@@ -69,8 +66,6 @@ struct sizigydb {
     int epollfd;
     /* Bus epoll fd */
     int bepollfd;
-    /* Atomic auto-increment unsigned long long int to get the next message ID */
-    Atomic *next_id;
     /* topics hashmapping */
     Hashmap *topics;
     /* ACK awaiting hashmapping fds (Unused) */
@@ -112,7 +107,7 @@ typedef struct {
 
 
 // Message ops
-Message *create_message(uint8_t, uint8_t, uint8_t, const uint8_t *, const uint8_t *, const uint8_t *);
+Message *create_message(Publish *, const uint8_t *);
 void destroy_message(Message *);
 
 

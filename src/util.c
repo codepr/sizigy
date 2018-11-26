@@ -170,7 +170,7 @@ void s_log(const uint8_t level, const char *fmt, ...) {
     va_list ap;
     char msg[MAX_LOG_SIZE + 4];
 
-    if (level > global.loglevel) return;
+    if (level > config.loglevel) return;
 
     va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);

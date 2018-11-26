@@ -32,35 +32,30 @@
 #include <stdio.h>
 #include <stdint.h>
 
-/* Packet type definition */
-#define REQUEST   0xfc
-#define RESPONSE  0xfe
+/* Error codes */
+#define OK              0x00
+#define EOOM            0x01
 
 /* Operation codes */
-#define CONNECT          0x00
-#define SUBSCRIBE        0x01
-#define UNSUBSCRIBE      0x02
-#define PUBLISH          0x03
-#define QUIT             0x04
-#define DATA             0x07
-#define CLUSTER_JOIN     0x09
-#define CLUSTER_JOIN_ACK 0x0a
-#define REPLICA          0x0b
-#define CONNACK          0x0c
-#define SUBACK           0x0d
-#define PUBACK           0x0f
-
-// Placeholders for QoS 2 *future implementation*
-#define PUBREC           0x10
-#define PUBREL           0x11
-#define PUBCOMP          0x12
-#define PINGREQ          0x13
-#define PINGRESP         0x14
+#define CONNECT         0x10
+#define CONNACK         0x20
+#define PUBLISH         0x30
+#define PUBACK          0x40
+#define PUBREC          0x50
+#define PUBREL          0x60
+#define PUBCOMP         0x70
+#define SUBSCRIBE       0x80
+#define SUBACK          0x90
+#define UNSUBSCRIBE     0xA0
+#define UNSUBACK        0xB0
+#define PINGREQ         0xC0
+#define PINGRESP        0xD0
+#define DISCONNECT      0xF0
 
 /* Deliverance guarantee */
-#define AT_MOST_ONCE  0x00
-#define AT_LEAST_ONCE 0x01
-#define EXACTLY_ONCE  0x02
+#define AT_MOST_ONCE    0x00
+#define AT_LEAST_ONCE   0x01
+#define EXACTLY_ONCE    0x02
 
 // request:
 //
@@ -78,64 +73,56 @@
 //    - publish     { id: int, topic: str, message: str, qos: int, deliver: int }
 
 
-#define HEADERLEN (2 * sizeof(uint8_t)) + (2 * sizeof(uint32_t))
+#define HEADERLEN sizeof(uint8_t) + sizeof(uint32_t)
 
 
 typedef struct {
-    uint8_t type;
     uint8_t opcode;
-    uint32_t data_len;
+    uint32_t size;
 } Header;
 
 
 typedef struct {
     Header *header;
-    union {
-        /* Connect request */
-        struct {
-            uint16_t sub_id_len;
-            uint8_t *sub_id;
-            uint16_t keepalive;
-            uint8_t clean_session;
-        };
-        /* Subscribe/publish request */
-        struct {
-            uint16_t topic_len;
-            uint32_t message_len;
-            uint8_t qos;
-            uint8_t retain;
-            uint8_t *topic;
-            uint8_t *message;
-        };
-        /* Ack request */
-        struct {
-            uint16_t ack_len;
-            uint64_t id;
-            uint8_t *ack_data;
-        };
-        /* Unsubscribe etc. */
-        uint8_t *data;
-    };
-} Request;
+    uint16_t idlen;
+    uint8_t *id;
+    uint16_t keepalive;
+    uint8_t clean_session;
+} Connect;
 
 
 typedef struct {
     Header *header;
-    union {
-        /* Publish response */
-        struct {
-            uint16_t topic_len;
-            uint32_t message_len;
-            uint8_t qos;
-            uint8_t sent_count;
-            uint64_t id;
-            uint8_t *topic;
-            uint8_t *message;
-        };
-        /* Ack/Nack */
-        uint8_t rc;
-    };
-} Response;
+    uint16_t topic_len;
+    uint8_t qos;
+    uint8_t *topic;
+} Subscribe;
+
+
+typedef struct {
+    Header *header;
+    uint16_t topic_len;
+    uint8_t *topic;
+} Unsubscribe;
+
+
+typedef struct {
+    Header *header;
+    uint16_t topic_len;
+    uint32_t message_len;
+    uint8_t qos;
+    uint8_t retain;
+    uint8_t dup;
+    uint8_t *topic;
+    uint8_t *message;
+} Publish;
+
+
+typedef struct {
+    Header *header;
+    uint16_t id;
+    uint8_t rc;
+} Ack;
 
 
 /* Contains the byte array version of the protocol_packet_t and the size
@@ -150,11 +137,6 @@ typedef struct {
 /* Opposite of pack, return an exit code and populate the protocol_packet_t
    structure passed in as argument, allowing the caller to decide to allocate
    it or use a stack defined pointer */
-Buffer *pack_request(Request *);
-int8_t unpack_request(Buffer *, Request *);
-Buffer *pack_response(Response *);
-int8_t unpack_response(Buffer *, Response*);
-
 
 Buffer *buffer_init(const size_t);
 void buffer_destroy(Buffer *);
@@ -167,6 +149,7 @@ uint32_t read_uint32(Buffer *);
 uint64_t read_uint64(Buffer *);
 uint8_t *read_string(Buffer *, size_t);
 
+
 // Write data
 void write_uint8(Buffer *, uint8_t);
 void write_uint16(Buffer *, uint16_t);
@@ -175,18 +158,28 @@ void write_uint64(Buffer *, uint64_t);
 void write_string(Buffer *, uint8_t *);
 
 
-#define build_ack_req(o, m) (build_ack_request(REQUEST, (o), 0, (m)))
-#define build_ack_res(o, m) (build_ack_response(RESPONSE, (o), (m)))
-#define build_rep_req(q, c, m) (build_subscribe_request(REQUEST, REPLICA, (q), (c), (m)))
-#define build_pub_req(q, c, m) (build_subscribe_request(REQUEST, PUBLISH, (q), (c), (m), 0))
-#define build_pub_res(q, c, m, i) (build_publish_response(RESPONSE, PUBLISH, (q), (c), (m), (i)))
+int8_t unpack_connect(Buffer *, Connect *);
+int8_t unpack_subscribe(Buffer *, Subscribe *);
+int8_t unpack_publish(Buffer *, Publish *);
+int8_t unpack_ack(Buffer *, Ack *);
 
-Request *build_ack_request(const uint8_t, const uint8_t, const uint64_t, const uint8_t *);
-Request *build_connect_request(const uint8_t, const uint8_t, const uint8_t, const uint8_t *);
-Request *build_unsubscribe_request(const uint8_t, const uint8_t, const uint8_t *);
-Request *build_subscribe_request(const uint8_t, const uint8_t, const uint8_t, const uint8_t *, const uint8_t *);
-Response *build_publish_response(const uint8_t, const uint8_t, const uint8_t, const uint8_t *, const uint8_t *, const uint8_t);
-Response *build_ack_response(const uint8_t, const uint8_t, const uint8_t);
 
+Ack *ack_pkt(const uint8_t, const uint16_t, const uint8_t);
+Connect *connect_pkt(const uint8_t *, const uint8_t, const uint8_t);
+Subscribe *subscribe_pkt(const uint8_t *, const uint8_t);
+Unsubscribe *unsubscribe_pkt(const uint8_t *);
+Publish *publish_pkt(const uint8_t *,
+        const uint8_t *, const uint8_t, const uint8_t, const uint8_t);
+
+void free_ack(Ack *);
+void free_connect(Connect *);
+void free_publish(Publish *);
+void free_subscribe(Subscribe *);
+void free_unsubscribe(Unsubscribe *);
+
+void pack_connect(Buffer *, Connect *);
+void pack_subscribe(Buffer *, Subscribe *);
+void pack_publish(Buffer *, Publish *);
+void pack_ack(Buffer *, Ack *);
 
 #endif
