@@ -260,6 +260,8 @@ static int pingreq_handler(SizigyDB *db, Client *c) {
     reply_pingresp(c, 0x00);
     update_client_last_action(c);
     DEBUG("Sending PINGRESP to %s", c->id);
+    Ack *a = (Ack *) c->ptr;
+    free_ack(&a);
     return 1;
 }
 
@@ -320,6 +322,8 @@ static int unsubscribe_handler(SizigyDB *db, Client *c) {
     }
     // TODO remove subscriptions from client
 
+    free_unsubscribe(&pkt);
+
     DEBUG("Sending UNSUBACK to %s r=%d", c->id, rc);
 
     return 0;
@@ -342,6 +346,7 @@ static int commands_hashmap_len(void) {
 
 
 static void *unpack_packet(const uint8_t opcode, Buffer *b) {
+
     if (opcode == CONNECT) {
         Connect *conn = malloc(sizeof(Connect));
         unpack_connect(b, conn);
@@ -354,7 +359,7 @@ static void *unpack_packet(const uint8_t opcode, Buffer *b) {
         Publish *pub = malloc(sizeof(Publish));
         unpack_publish(b, pub);
         return pub;
-    } else if (opcode == SUBACK || opcode == PUBACK) {
+    } else if (opcode == SUBACK || opcode == PUBACK || opcode == PINGREQ) {
         Ack *ack = malloc(sizeof(Ack));
         unpack_ack(b, ack);
         return ack;
@@ -494,6 +499,27 @@ static int reply_handler(SizigyDB *db, Client *client) {
             free_ack(&ack);
             buffer_destroy(res);
         }
+    } else if (reply->opcode == SUBACK && NULL != reply->retained) {
+        // Send SUBACK
+        if ((sendall(reply->fd, reply->payload->data,
+                        reply->payload->size, &sent)) < 0) {
+            perror("send(2): can't write on socket descriptor");
+            ret = -1;
+        }
+        Message *r = reply->retained;
+        Publish *msg = publish_pkt((const uint8_t *) strdup(r->topic),
+                (const uint8_t *) strdup(r->payload), r->qos, 1, 0);
+        Buffer *b = buffer_init(msg->header->size);
+        pack_publish(b, msg);
+        if ((sendall(reply->fd, b->data, b->size, &sent)) < 0) {
+            perror("Can't publish");
+            ret = -1;
+        }
+        update_client_last_action(client);
+        DEBUG("Sending PUBLISH to %s t=%s q=%d r=1 (%ld bytes)",
+                client->id, r->topic, r->qos, b->size);
+        free_publish(&msg);
+        buffer_destroy(b);
     } else {
 
         if ((sendall(reply->fd, reply->payload->data,
@@ -547,7 +573,6 @@ static int accept_handler(SizigyDB *db, Client *server) {
     client->addr = strdup(ip_buff);
     client->fd = clientsock;
     client->keepalive = config.keepalive,  // FIXME: Placeholder
-    /* client->last_action_time = init_atomic(); */
     client->ctx_handler = request_handler;
 
     update_client_last_action(client);
@@ -728,7 +753,7 @@ int start_server(const char *addr, char *port, int node_fd) {
     config.loglevel = DEBUG;
     config.run = eventfd(0, EFD_NONBLOCK);
     pthread_mutex_init(&(config.lock), NULL);
-    config.keepalive = 10;
+    config.keepalive = 60;
 
     SizigyDB sizigydb;
 
@@ -912,7 +937,7 @@ int publish_message(Topic *t, Publish *msg, const uint8_t *sender) {
             perror("Can't publish");
         update_client_last_action(sub->client);
         total_bytes_sent += sent;
-        DEBUG("Sending PUBLISH to %s c=%s q=%d r=%d (%ld bytes)",
+        DEBUG("Sending PUBLISH to %s t=%s q=%d r=%d (%ld bytes)",
                 sub->client->id, t->name, msg->qos, msg->retain, b->size);
 
         cursor = cursor->next;
